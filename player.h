@@ -7,15 +7,22 @@ class player{
 
     int current_round_bet;
     int remaining_money;
+    int grade;
     
     Card* card1;
     Card* card2;
-    Card* result_card[5];
+    Card* result_list[5];
   public:
     player(const char* player_name, int player_num, int remaining_money);
+
     void set_initial_card(Card* card1, Card* card2);
+    void set_result_card(Card* card_list[]);
+    
+    void set_grade(int grade);
+
     Card* get_first_card();
     Card* get_second_card();
+
     void show_card();
 
     const char* get_name();

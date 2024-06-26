@@ -34,7 +34,7 @@ class table_server{
     void sort(int left, int right, Card* card_list[]);
     void swap(int left, int right, Card* card_list[]);
     
-    void calculate_grade();
+    int calculate_grade(Card* card_list[]);
     int check_straight_flush(Card* card_list[]);
     int check_four_kind(Card* card_list[]);
     int check_full_house(Card* card_list[]);

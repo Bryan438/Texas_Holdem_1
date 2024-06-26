@@ -4,20 +4,20 @@
 #include "deck_of_card.h"
 
 deck_of_card::deck_of_card(){
-  const char* suit;
+  card_suit suit;
   for(int i = 2; i <= 14; i++){
     for(int j = 1; j <= 4; j++){
       if(j == 1){
-        suit = "Diamond";
+        suit = Diamond;
       }
       else if(j == 2){
-        suit = "Club";
+        suit = Club;
       }
       else if(j == 3){
-        suit = "Heart";
+        suit = Heart;
       }
       else{
-        suit = "Spade";
+        suit = Spade;
       }
       cards[(i * 4 + j) - 9] = new Card(suit,i);
     }

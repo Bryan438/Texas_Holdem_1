@@ -12,6 +12,7 @@ player::player(const char* name, int num, int money){
   card1 = NULL;
   card2 = NULL;
   current_round_bet = 0;
+  grade = -1;
   player_status = true;
   allin_status = false;
 }
@@ -21,6 +22,16 @@ void player::set_initial_card(Card* c1, Card* c2){
   card2 = c2;
 }
   
+void player::set_result_card(Card* card_list[]){
+  for(int i = 0; i < 5; i++){
+    result_list[i] = card_list[i];
+  }
+}
+
+void player::set_grade(int grade_num){
+  grade = grade_num;
+}
+
 Card* player::get_first_card(){
   return card1;
 }

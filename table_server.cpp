@@ -227,16 +227,16 @@ void table_server::river(){
 void table_server::showdown(){
   Card* card_cpy[7];
   
-  //for(int i = 0; i < number_of_player; i++){
+  for(int i = 0; i < number_of_player; i++){
      for(int j = 0; j < 5; j++){
        card_cpy[j] = card_list[j];
      }
-     card_cpy[5] = player_list[0]->get_first_card();
-     card_cpy[6] = player_list[0]->get_second_card();
+     card_cpy[5] = player_list[i]->get_first_card();
+     card_cpy[6] = player_list[i]->get_second_card();
      sort(0, 6, card_cpy);
-     
-     //check_straight_flush();
-  //}
+     player_list[i]->set_grade(calculate_grade(card_cpy));
+     player_list[i]->set_result_card(result_list);
+  }
 }
 
 void table_server::sort(int item_from_left, int item_from_right, Card* card_list[]){
@@ -278,7 +278,39 @@ void table_server::swap(int index1, int index2, Card* card_list[]){
   card_list[index2] = temp;
 }
 
-void table_server::calculate_grade(){
+int table_server::calculate_grade(Card* card_list[]){
+  int grade = 0;
+  if(check_straight_flush(card_list) == 10){
+    grade = 10;
+  }
+  else if(check_straight_flush(card_list) == 9){
+    grade = 9;
+  }
+  else if(check_four_kind(card_list) == 8){
+    grade = 8;
+  }
+  else if(check_full_house(card_list) == 7){
+    grade = 7;
+  }
+  else if(check_flush(card_list) == 6){
+    grade = 6;
+  }
+  else if(check_straight(card_list) == 5){
+    grade = 5;
+  }
+  else if(check_three_kind(card_list) == 4){
+    grade = 4;
+  }
+  else if(check_two_pairs(card_list) == 3){
+    grade = 3;
+  }
+  else if(check_one_pair(card_list) == 2){
+    grade = 2;
+  }
+  else{
+    grade = 1;
+  }
+  return grade;
 }
 
 int table_server::check_straight_flush(Card* card_list[]){
@@ -286,7 +318,7 @@ int table_server::check_straight_flush(Card* card_list[]){
   int count = 1;
 
   for(int i = 0; i < 3; i++){
-    const char* suit = card_list[i]->get_suit();
+    card_suit suit = card_list[i]->get_suit();
     int number = card_list[i]->get_number();
     int index = i + 1;
     
@@ -325,12 +357,12 @@ int table_server::check_four_kind(Card* card_list[]){
   bool single_mark = false;
   for(int i = 1; i < 7; i++){
     if(card_list[i]->get_number() == number){
-      result_list[count+1] = card_list[i-1]; 
+      result_list[count] = card_list[i-1]; 
       count++;
       if(count == 3){
-        result_list[count+1] = card_list[i]; 
+        result_list[count] = card_list[i]; 
         if(single_mark == false){
-          result_list[0] = card_list[i+1]; 
+          result_list[4] = card_list[i+1]; 
           single_mark = true;
         }
         break;
@@ -338,7 +370,7 @@ int table_server::check_four_kind(Card* card_list[]){
     }
     else{
       if(single_mark == false){
-        result_list[0] = card_list[0];
+        result_list[4] = card_list[0];
         single_mark = true;
       }
       count = 0;
@@ -434,37 +466,49 @@ int table_server::check_flush(Card* card_list[]){
   int club_count = 0;
   int diamond_count = 0;
   int heart_count = 0;
-  const char* dest_card;
+  card_suit dest_card;
+  bool found = false;
 
   for(int i = 0; i < 7; i++){
-    if(strcmp(card_list[i]->get_suit(),"Spade") == 0){
-      spade_count++;
+    switch(card_list[i]->get_suit()){
+      case Spade:
+        spade_count++;
+        if(spade_count >= 5){
+          dest_card = Spade;
+          found = true;
+        }
+        break;
+      case Club:
+        club_count++;
+        if(club_count >= 5){
+          dest_card = Club;
+          found = true;
+        }
+        break;
+      case Diamond:
+        diamond_count++;
+        if(heart_count >= 5){
+          dest_card = Heart;
+          found = true;
+        }
+        break;
+      case Heart:
+        heart_count++;
+        if(diadond_count >= 5){
+          dest_card = Diamond;
+          found = true;
+        }
+        break;
+      default:
+        break;
     }
-    if(strcmp(card_list[i]->get_suit(),"Club") == 0){
-      club_count++;
-    }
-    if(strcmp(card_list[i]->get_suit(),"Diamond") == 0){
-      diamond_count++;
-    }
-    if(strcmp(card_list[i]->get_suit(),"Heart") == 0){
-      heart_count++;
+    if(found){
+      break;
     }
   }
-  if(spade_count == 5){
-    dest_card = "Spade";
-  }
-  if(club_count == 5){
-    dest_card = "Club";
-  }
-  if(heart_count == 5){
-    dest_card = "Heart";
-  }
-  if(diamond_count == 5){
-    dest_card = "Diamond";
-  }
-  if(dest_card != NULL){
+  if(found){
     for(int i = 0; i < 7; i++){
-      if(strcmp(card_list[i]->get_suit(),dest_card) == 0){
+      if(card_list[i]->get_suit() == dest_card){
         result_list[count] = card_list[i];
         count++;
         if(count == 5){
@@ -480,14 +524,14 @@ int table_server::check_flush(Card* card_list[]){
 int table_server::check_three_kind(Card* card_list[]){
   int count = 0;
   int number = card_list[0]->get_number();
-  int two_left_count = 0;
+  int two_left_count = 3;
   for(int i = 1; i < 7; i++){
     if(card_list[i]->get_number() == number){
-      result_list[count + 2] = card_list[i - 1];
+      result_list[count] = card_list[i - 1];
       count++;
       if(count == 2){
-        result_list[count + 2] = card_list[i];
-        while(two_left_count != 2){
+        result_list[count] = card_list[i];
+        while(two_left_count != 5){
           i++;
           result_list[two_left_count] = card_list[i];
           two_left_count++;
@@ -496,7 +540,7 @@ int table_server::check_three_kind(Card* card_list[]){
       }
     }
     else{
-      if(two_left_count != 2){
+      if(two_left_count != 5){
         result_list[two_left_count] = card_list[i - 1];
         two_left_count++;
       }
@@ -518,17 +562,17 @@ int table_server::check_two_pairs(Card* card_list[]){
   bool single_left = false;
   for(int i = 1; i < 7; i++){
     if(card_list[i]->get_number() == number){
-      result_list[two_strike + 1] = card_list[i - 1];
+      result_list[two_strike] = card_list[i - 1];
       two_strike++;
       if(two_strike == 1){
-        result_list[two_strike + 1] = card_list[i];
+        result_list[two_strike] = card_list[i];
         double_num = number;
         break;
       }
     }
     number = card_list[i]->get_number();
     if(single_left == false){
-      result_list[0] = card_list[i - 1];
+      result_list[4] = card_list[i - 1];
       single_left = true;
     }
   }
@@ -538,19 +582,19 @@ int table_server::check_two_pairs(Card* card_list[]){
     for(int j = 1; j < 7; j++){
       if(double_num != number){
         if(card_list[j]->get_number() == number){
-          result_list[two_strike + 3] = card_list[j - 1];
+          result_list[two_strike + 2] = card_list[j - 1];
           two_strike++;
           if(two_strike == 1){
-            result_list[two_strike + 3] = card_list[j];
+            result_list[two_strike + 2] = card_list[j];
             if(single_left == false){
-              result_list[0] = card_list[j + 1];
+              result_list[4] = card_list[j + 1];
             }
             break;
           }
         }
       }
       if(single_left == false && double_num != number && number != card_list[j]->get_number()){
-        result_list[0] = card_list[j];
+        result_list[4] = card_list[j - 1];
         single_left = true;
       }
       number = card_list[j]->get_number();
@@ -566,21 +610,21 @@ int table_server::check_two_pairs(Card* card_list[]){
 int table_server::check_one_pair(Card* card_list[]){
   int count = 0;
   int number = card_list[0]->get_number();
-  int triple_count = 0;
+  int triple_count = 2;
   for(int i = 1; i < 7; i++){
     if(card_list[i]->get_number() == number){
-      result_list[count + 3] = card_list[i - 1];
+      result_list[count] = card_list[i - 1];
       count++;
       if(count > 1){
         break;
       }
-      result_list[count + 3] = card_list[i];
-      while(triple_count != 3){
+      result_list[count] = card_list[i];
+      while(triple_count != 5){
         result_list[triple_count] = card_list[i + 1];
         triple_count++;
       }
     }
-    if(triple_count != 3){
+    if(triple_count != 5){
       result_list[triple_count] = card_list[i - 1];
       triple_count++;
     }
