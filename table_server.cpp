@@ -226,16 +226,25 @@ void table_server::river(){
 
 void table_server::showdown(){
   Card* card_cpy[7];
+  int highest_grade = -1;
   
   for(int i = 0; i < number_of_player; i++){
-     for(int j = 0; j < 5; j++){
-       card_cpy[j] = card_list[j];
-     }
-     card_cpy[5] = player_list[i]->get_first_card();
-     card_cpy[6] = player_list[i]->get_second_card();
-     sort(0, 6, card_cpy);
-     player_list[i]->set_grade(calculate_grade(card_cpy));
-     player_list[i]->set_result_card(result_list);
+    if(player_status == true){
+      for(int j = 0; j < 5; j++){
+        card_cpy[j] = card_list[j];
+      }
+      card_cpy[5] = player_list[i]->get_first_card();
+      card_cpy[6] = player_list[i]->get_second_card();
+      sort(0, 6, card_cpy);
+      reverse(card_cpy);
+      player_list[i]->set_grade(calculate_grade(card_cpy));
+      player_list[i]->set_result_card(result_list);
+    }
+  }
+
+  for(int i = 0; i < 5; i++){
+    highest_grade
+
   }
 }
 
@@ -278,6 +287,18 @@ void table_server::swap(int index1, int index2, Card* card_list[]){
   card_list[index2] = temp;
 }
 
+void table_server::reverse(Card* card_list[]){
+  Card* temp_list[7];
+  int reverse_count = 6;
+  for(int i = 0; i < 7; i++){
+    temp_list[i] = card_list[reverse_count];
+    reverse_count--;
+  }
+  for(int j = 0; j < 7; j++){
+    card_list[j] = temp_list[j];
+  }
+}
+
 int table_server::calculate_grade(Card* card_list[]){
   int grade = 0;
   if(check_straight_flush(card_list) == 10){
@@ -308,6 +329,9 @@ int table_server::calculate_grade(Card* card_list[]){
     grade = 2;
   }
   else{
+    for(int i = 0; i < 5; i++){
+      result_list[i] = card_list[i];
+    }
     grade = 1;
   }
   return grade;
@@ -494,7 +518,7 @@ int table_server::check_flush(Card* card_list[]){
         break;
       case Heart:
         heart_count++;
-        if(diadond_count >= 5){
+        if(diamond_count >= 5){
           dest_card = Diamond;
           found = true;
         }

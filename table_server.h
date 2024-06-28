@@ -32,6 +32,7 @@ class table_server{
 
     void showdown();
     void sort(int left, int right, Card* card_list[]);
+    void reverse(Card* card_list[]);
     void swap(int left, int right, Card* card_list[]);
     
     int calculate_grade(Card* card_list[]);
