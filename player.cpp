@@ -28,10 +28,17 @@ void player::set_result_card(Card* card_list[]){
   }
 }
 
+Card** player::get_result_card(){
+  return result_list;
+}
+
 void player::set_grade(int grade_num){
   grade = grade_num;
 }
 
+int player::get_grade(){
+  return grade;
+}
 Card* player::get_first_card(){
   return card1;
 }
@@ -52,6 +59,10 @@ const char* player::get_name(){
 void player::set_money(int moneychange){
   remaining_money = remaining_money -= moneychange;
   current_round_bet += moneychange;
+}
+
+void player::add_money(int moneychange){
+  remaining_money += moneychange;
 }
 
 int player::get_money(){

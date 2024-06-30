@@ -226,10 +226,14 @@ void table_server::river(){
 
 void table_server::showdown(){
   Card* card_cpy[7];
+  player* winner_list[12];
+  player* player_candidate[12];
   int highest_grade = -1;
+  int candidate_count = 0;
+  int winner_count = 0;
   
   for(int i = 0; i < number_of_player; i++){
-    if(player_status == true){
+    if(player_list[i]->get_player_status() == true){
       for(int j = 0; j < 5; j++){
         card_cpy[j] = card_list[j];
       }
@@ -242,9 +246,67 @@ void table_server::showdown(){
     }
   }
 
-  for(int i = 0; i < 5; i++){
-    highest_grade
+  for(int i = 0; i < number_of_player; i++){
+    int current_grade = player_list[i]->get_grade();
+    if(current_grade > highest_grade){
+      highest_grade = current_grade;
+    }
+  }
+  for(int i = 0; i < number_of_player; i++){
+    if(player_list[i]->get_grade() == highest_grade){
+      player_candidate[candidate_count] = player_list[i];
+      candidate_count++;
+    }
+  }
 
+  if(candidate_count == 1){
+    winner_list[0] = player_candidate[0];
+    winner_count++;
+  }
+  else{
+    Card** high_result_list = player_candidate[0]->get_result_card();
+    int equal_count = 0;
+    bool first_added = false;
+    
+    for(int i = 1; i < candidate_count; i++){
+      Card** cur_result_list = player_candidate[i]->get_result_card();
+      for(int j = 0; j < 5; j++){
+        if(high_result_list[j]->get_number() < cur_result_list[j]->get_number()){
+
+          winner_count = 0;
+          winner_list[winner_count] = player_candidate[i];
+          winner_count++;
+
+          high_result_list = cur_result_list;
+          first_added = true;
+          break;
+        }
+        else if(high_result_list[j]->get_number() > cur_result_list[j]->get_number()){
+          if(first_added == false){
+            winner_list[winner_count] = player_candidate[0];
+            winner_count++;
+            first_added = true;
+          }
+          break;
+        }
+        else{
+          equal_count++;
+        }
+      }
+      if(equal_count == 5){
+        if(first_added == false){
+          winner_list[winner_count] = player_candidate[i-1];
+          winner_count++;
+          first_added = true;
+        }
+        winner_list[winner_count] = player_candidate[i];
+        winner_count++;
+      }
+    }
+  }
+  int winning_money = total_pot / winner_count;
+  for(int i = 0; i < winner_count; i++){
+    winner_list[i]->add_money(winning_money);
   }
 }
 
