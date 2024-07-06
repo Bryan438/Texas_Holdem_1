@@ -1,6 +1,12 @@
 #include <iostream>
 #include <string.h>
 #include <stdlib.h>
+#include <sys/socket.h>
+#include <cstring>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <unistd.h>
+
 #include "card.h"
 #include "deck_of_card.h"
 #include "player.h"
@@ -332,6 +338,7 @@ void test_case_one_pair3(){
   ts->print_result_list();
 }
 
+
 int main(){
   table_server* ts = new table_server();
   ts->preparation();
@@ -341,21 +348,22 @@ int main(){
   ts->turn();
   ts->river();
   ts->showdown();
-  
+  ts->reset();
+
 
   /*test_case_straight_flush();
-  test_case_four_kind();
-  test_case_four_kind2();
-  
-  test_case_full_house();
-  test_case_full_house2();
-  test_case_full_house3();
-  test_case_full_house4();
+    test_case_four_kind();
+    test_case_four_kind2();
 
-  test_case_flush();
-  test_case_flush2();
-  test_case_flush3();
-  
+    test_case_full_house();
+    test_case_full_house2();
+    test_case_full_house3();
+    test_case_full_house4();
+
+    test_case_flush();
+    test_case_flush2();
+    test_case_flush3();
+
   test_case_straight();
   test_case_straight2();
 

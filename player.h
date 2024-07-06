@@ -1,3 +1,10 @@
+enum player_decision{
+  CALL = 0x01, 
+  RAISE = 0x02, 
+  FOLD = 0x04,
+  CHECK = 0x08
+};
+
 class player{
   private:
     const char* player_name;
@@ -42,4 +49,5 @@ class player{
     void fold();
     
     void reset_round();
+    void reset_game();
 };

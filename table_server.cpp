@@ -6,6 +6,7 @@
 #include "player.h"
 #include "table_server.h"
 
+
 table_server::table_server(){
   dcards = new deck_of_card(); 
   total_pot = 0;
@@ -74,7 +75,127 @@ void table_server::add_total_pot(int amount){
   total_pot += amount;
 }
 
+int table_server::get_available_decision(int player_num){
+
+  int combined = 0x00;
+  if(player_list[player_num]->get_money() <= current_bet - player_list[player_num]->get_current_round_bet()){
+    combined = FOLD | CALL;
+  }
+  else{
+    if(current_round > 1){
+      combined = FOLD | RAISE | CHECK;
+    }
+    else{
+      combined = FOLD | RAISE | CALL;
+    }
+  }
+  printf("Player %d, ", player_num); 
+  if(combined & FOLD){
+    printf(" [F]old ");
+  }
+  if(combined & RAISE){
+    printf(" [R]aise ");
+  }
+  if(combined & CALL){
+    printf(" [C]all ");
+  }
+  if(combined & CHECK){
+    printf(" c[H]eck ");
+  }
+  return combined;
+}
+
+int table_server::check_valid_input(int combined, char input){
+  int decision = 0;
+  switch(input){
+    case 'F':
+    case 'f':
+      decision = FOLD;
+      break;
+    case 'R':
+    case 'r':
+      decision = RAISE;
+      break;
+    case 'c':
+    case 'C':
+      decision = CALL;
+      break;
+    case 'H':
+    case 'h':
+      decision = CHECK;
+      break;
+    default:
+      break;
+  }
+  return decision & combined ? decision : -1;
+}
+
+char table_server::input(){
+  
+ /* int listenfd = 0;;
+  int connfd = 0;;  
+  int rece_client = 0;
+
+
+  struct sockaddr_in serv_addr; 
+  serv_addr.sin_family = AF_INET;
+  serv_addr.sin_addr.s_addr = htonl(INADDR_ANY);
+  serv_addr.sin_port = htons(5000); 
+
+  bind(listenfd, (struct sockaddr*)&serv_addr, sizeof(serv_addr)); 
+  listen(listenfd, 10); 
+  while(1)
+  {
+    connfd = accept(listenfd, (struct sockaddr*)NULL, NULL); 
+  }
+
+  recv(connfd, rece_client, sizeof(from_client), 0);
+  return rece_client;
+  close(connfd);
+  */
+  char decision;
+  std::cin >> decision;
+  return decision;
+}
+
+
+int table_server::input_action(int decision, int player_num, int raise_status){
+  int money_added = 0;
+  switch(decision){
+    case FOLD:
+      player_list[player_num]->fold();
+      break;
+    case CALL:
+      money_added = player_list[player_num]->call(current_bet);
+      break;
+    case CHECK:
+      money_added = player_list[player_num]->call(current_bet);
+      break;
+    default:
+      money_added = player_list[player_num]->raise();
+      current_bet = player_list[player_num]->get_current_round_bet();
+      raise_status = 1;
+      break;
+  }
+  total_pot += money_added;
+  printf("money remaining = %d, money add = %d\n", player_list[player_num]->get_money(), money_added);
+  return raise_status;
+}
+
 int table_server::check_available_decision(int player_num, int raise_status){
+  int combined_decision = get_available_decision(player_num);
+  int decision = 0;
+  int valid_status = -1;
+  while(valid_status == -1){
+    decision = input();
+    valid_status = check_valid_input(combined_decision, decision);
+  }
+
+  raise_status = input_action(valid_status, player_num, raise_status);
+  return raise_status;
+}
+
+/*int table_server::check_available_decision(int player_num, int raise_status){
   int decision;
   int money_added;
   if(player_list[player_num]->get_money() <= current_bet - player_list[player_num]->get_current_round_bet()){
@@ -117,7 +238,7 @@ int table_server::check_available_decision(int player_num, int raise_status){
   total_pot += money_added;
   printf("money remaining = %d, money add = %d\n", player_list[player_num]->get_money(), money_added);
   return raise_status;
-}
+}*/
 
 void table_server::preflop(){
   if(current_round != 1){
@@ -133,8 +254,11 @@ void table_server::preflop(){
     start_pos = 0;
   }
   while(start_pos != end_pos){
-    if(player_list[start_pos]->get_allin_status() == false && player_list[start_pos]->get_player_status() == false){
+    if(player_list[start_pos]->get_allin_status() == true || player_list[start_pos]->get_player_status() == false){
       start_pos++;
+      if(start_pos >= number_of_player){
+        start_pos = 0;
+      }
       continue;
     }
     raise_status = check_available_decision(start_pos, raise_status);
@@ -155,6 +279,7 @@ void table_server::preflop(){
 }
 
 void table_server::round(int card_count){
+
   int raise_status = 0;
   current_bet = 0;
   for(int j = 0; j < number_of_player; j++){
@@ -182,8 +307,11 @@ void table_server::round(int card_count){
   bool first_status = true;
   while(current_pos != end_pos || first_status == true){
     first_status = false;
-    if(player_list[current_pos]->get_player_status() == false){
+    if(player_list[current_pos]->get_player_status() == false || player_list[current_pos]->get_allin_status() == true){
       current_pos++;
+      if(current_pos >= number_of_player){
+        current_pos = 0;
+      }
       continue;
     }
     raise_status = check_available_decision(current_pos, raise_status);
@@ -224,11 +352,21 @@ void table_server::river(){
   current_round++;
 }
 
+int table_server::get_highest_grade(){
+  int highest_grade = -1;
+  for(int i = 0; i < number_of_player; i++){
+    int current_grade = player_list[i]->get_grade();
+    if(current_grade > highest_grade){
+      highest_grade = current_grade;
+    }
+  }
+  return highest_grade;
+}
+
 void table_server::showdown(){
   Card* card_cpy[7];
   player* winner_list[12];
   player* player_candidate[12];
-  int highest_grade = -1;
   int candidate_count = 0;
   int winner_count = 0;
   
@@ -246,12 +384,8 @@ void table_server::showdown(){
     }
   }
 
-  for(int i = 0; i < number_of_player; i++){
-    int current_grade = player_list[i]->get_grade();
-    if(current_grade > highest_grade){
-      highest_grade = current_grade;
-    }
-  }
+  int highest_grade = get_highest_grade();
+
   for(int i = 0; i < number_of_player; i++){
     if(player_list[i]->get_grade() == highest_grade){
       player_candidate[candidate_count] = player_list[i];
@@ -306,7 +440,53 @@ void table_server::showdown(){
   }
   int winning_money = total_pot / winner_count;
   for(int i = 0; i < winner_count; i++){
-    winner_list[i]->add_money(winning_money);
+    if(winner_list[i]->get_allin_status()){
+      winner_list[i]->add_money(winner_list[i]->get_current_round_bet());
+    }
+    else{
+      winner_list[i]->add_money(winning_money);
+    }
+  }
+}
+
+/*void table_server::compare(Card* cur_result_list[], Card* high_result_list[]){
+  for(int j = 0; j < 5; j++){
+    if(high_result_list[j]->get_number() < cur_result_list[j]->get_number()){
+
+      winner_count = 0;
+      winner_list[winner_count] = player_candidate[i];
+      winner_count++;
+
+      high_result_list = cur_result_list;
+      first_added = true;
+      break;
+    }
+    else if(high_result_list[j]->get_number() > cur_result_list[j]->get_number()){
+      if(first_added == false){
+        winner_list[winner_count] = player_candidate[0];
+        winner_count++;
+        first_added = true;
+      }
+      break;
+    }
+    else{
+      equal_count++;
+    }
+  }
+  if(equal_count == 5){
+    if(first_added == false){
+      winner_list[winner_count] = player_candidate[i-1];
+      winner_count++;
+      first_added = true;
+    }
+    winner_list[winner_count] = player_candidate[i];
+    winner_count++;
+  }
+
+}*/
+void table_server::reset(){
+  for(int i = 0; i < number_of_player; i++){
+    player_list[i]->reset_game();
   }
 }
 

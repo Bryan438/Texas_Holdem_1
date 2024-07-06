@@ -23,7 +23,12 @@ class table_server{
     void set_inital_card();
     int get_current_bet();
     void add_total_pot(int amount);
+
+    int get_available_decision(int current_player);
     int check_available_decision(int current_player, int raise_status);
+    int check_valid_input(int combined, char input);
+    char input();
+    int input_action(int decision, int player_num, int raise_status);
 
     void preflop();
     void flop();
@@ -34,6 +39,7 @@ class table_server{
     void sort(int left, int right, Card* card_list[]);
     void reverse(Card* card_list[]);
     void swap(int left, int right, Card* card_list[]);
+    int get_highest_grade();
     
     int calculate_grade(Card* card_list[]);
     int check_straight_flush(Card* card_list[]);
@@ -46,5 +52,6 @@ class table_server{
     int check_one_pair(Card* card_list[]);
 
     void print_result_list();
+    void reset();
 };
 

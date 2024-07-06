@@ -39,6 +39,7 @@ void player::set_grade(int grade_num){
 int player::get_grade(){
   return grade;
 }
+
 Card* player::get_first_card(){
   return card1;
 }
@@ -121,6 +122,12 @@ void player::fold(){
 }
 
 void player::reset_round(){
+  current_round_bet = 0;
+}
+
+void player::reset_game(){
+  player_status = true;
+  allin_status = false;
   current_round_bet = 0;
 }
 
