@@ -340,17 +340,43 @@ void test_case_one_pair3(){
 
 
 int main(){
+  
   table_server* ts = new table_server();
   ts->preparation();
   ts->set_inital_card();
+  /*
   ts->preflop();
   ts->flop();
   ts->turn();
   ts->river();
+  */
+
+  void (table_server::*preflop_ptr)();
+  preflop_ptr = &table_server::preflop;
+
+  void (table_server::*flop_ptr)();
+  flop_ptr = &table_server::flop;
+
+  void (table_server::*turn_ptr)();
+  turn_ptr = &table_server::turn;
+
+  void (table_server::*river_ptr)();
+  river_ptr = &table_server::river;
+
+  void (table_server::*process_array[5])();
+  process_array[0] = preflop_ptr;
+  process_array[1] = flop_ptr;
+  process_array[2] = turn_ptr;
+  process_array[3] = river_ptr;
+
+  for(int i = 0; i < 4; i++){
+    if(ts->get_active_player() == 1){
+      break ;
+    }
+    (*ts.*process_array[i])();
+  }
   ts->showdown();
   ts->reset();
-
-
   /*test_case_straight_flush();
     test_case_four_kind();
     test_case_four_kind2();

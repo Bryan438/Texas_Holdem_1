@@ -52,6 +52,7 @@ void table_server::add_player(player* p){
   player_list[number_of_player] = p;
   printf("Name = %s", player_list[number_of_player]->get_name());
   number_of_player += 1;
+  active_player += 1;
 }
 
 int table_server::get_player_number(){
@@ -69,6 +70,10 @@ void table_server::set_inital_card(){
 
 int table_server::get_current_bet(){
   return current_bet;
+}
+
+int table_server::get_active_player(){
+  return active_player;
 }
 
 void table_server::add_total_pot(int amount){
@@ -192,53 +197,12 @@ int table_server::check_available_decision(int player_num, int raise_status){
   }
 
   raise_status = input_action(valid_status, player_num, raise_status);
+  if(valid_status == FOLD){
+    active_player--;
+  }
   return raise_status;
 }
 
-/*int table_server::check_available_decision(int player_num, int raise_status){
-  int decision;
-  int money_added;
-  if(player_list[player_num]->get_money() <= current_bet - player_list[player_num]->get_current_round_bet()){
-    printf("Player %d, The options for you are FOLD/CALL(Allin), Press 1 for Fold; 2 for Call", player_num); 
-    std::cin >> decision;
-    if(decision == 1){
-      player_list[player_num]->fold();
-    }
-    else if(decision == 2){
-      money_added = player_list[player_num]->call(current_bet);
-    }
-    else{
-      printf("Invalid input");
-    }
-  }
-  else{
-    if(current_round > 1){
-      printf("Player %d, The options for you are FOLD/CHECK/RAISE, Press 1 for Fold; 2 for Check; 3 for Raise", player_num); 
-    }
-    else{
-      printf("Player %d, The options for you are FOLD/CALL/RAISE, Press 1 for Fold; 2 for Call; 3 for Raise", player_num); 
-    }
-    std::cin >> decision;
-    if(decision == 1){
-      player_list[player_num]->fold();
-      money_added = 0;
-    }
-    else if(decision == 2){
-      money_added = player_list[player_num]->call(current_bet);
-    }
-    else if(decision == 3){
-      money_added = player_list[player_num]->raise();
-      current_bet = player_list[player_num]->get_current_round_bet();
-      raise_status = 1;
-    }
-    else{
-      printf("Invalid input");
-    }
-  }
-  total_pot += money_added;
-  printf("money remaining = %d, money add = %d\n", player_list[player_num]->get_money(), money_added);
-  return raise_status;
-}*/
 
 void table_server::preflop(){
   if(current_round != 1){
@@ -364,126 +328,138 @@ int table_server::get_highest_grade(){
 }
 
 void table_server::showdown(){
-  Card* card_cpy[7];
-  player* winner_list[12];
-  player* player_candidate[12];
-  int candidate_count = 0;
-  int winner_count = 0;
-  
-  for(int i = 0; i < number_of_player; i++){
-    if(player_list[i]->get_player_status() == true){
-      for(int j = 0; j < 5; j++){
-        card_cpy[j] = card_list[j];
-      }
-      card_cpy[5] = player_list[i]->get_first_card();
-      card_cpy[6] = player_list[i]->get_second_card();
-      sort(0, 6, card_cpy);
-      reverse(card_cpy);
-      player_list[i]->set_grade(calculate_grade(card_cpy));
-      player_list[i]->set_result_card(result_list);
-    }
-  }
-
-  int highest_grade = get_highest_grade();
-
-  for(int i = 0; i < number_of_player; i++){
-    if(player_list[i]->get_grade() == highest_grade){
-      player_candidate[candidate_count] = player_list[i];
-      candidate_count++;
-    }
-  }
-
-  if(candidate_count == 1){
-    winner_list[0] = player_candidate[0];
-    winner_count++;
+  if(active_player == 1){
+    all_fold_case();
   }
   else{
-    Card** high_result_list = player_candidate[0]->get_result_card();
-    int equal_count = 0;
-    bool first_added = false;
-    
-    for(int i = 1; i < candidate_count; i++){
-      Card** cur_result_list = player_candidate[i]->get_result_card();
-      for(int j = 0; j < 5; j++){
-        if(high_result_list[j]->get_number() < cur_result_list[j]->get_number()){
+    Card* card_cpy[7];
+    player* winner_list[12];
+    player* player_candidate[12];
+    int candidate_count = 0;
+    int winner_count = 0;
 
-          winner_count = 0;
-          winner_list[winner_count] = player_candidate[i];
-          winner_count++;
-
-          high_result_list = cur_result_list;
-          first_added = true;
-          break;
+    for(int i = 0; i < number_of_player; i++){
+      if(player_list[i]->get_player_status() == true){
+        for(int j = 0; j < 5; j++){
+          card_cpy[j] = card_list[j];
         }
-        else if(high_result_list[j]->get_number() > cur_result_list[j]->get_number()){
+        card_cpy[5] = player_list[i]->get_first_card();
+        card_cpy[6] = player_list[i]->get_second_card();
+        sort(0, 6, card_cpy);
+        reverse(card_cpy);
+        player_list[i]->set_grade(calculate_grade(card_cpy));
+        player_list[i]->set_result_card(result_list);
+      }
+    }
+
+    int highest_grade = get_highest_grade();
+
+    for(int i = 0; i < number_of_player; i++){
+      if(player_list[i]->get_grade() == highest_grade){
+        player_candidate[candidate_count] = player_list[i];
+        candidate_count++;
+      }
+    }
+
+    if(candidate_count == 1){
+      winner_list[0] = player_candidate[0];
+      winner_count++;
+    }
+    else{
+      Card** high_result_list = player_candidate[0]->get_result_card();
+      int equal_count = 0;
+      bool first_added = false;
+
+      for(int i = 1; i < candidate_count; i++){
+        Card** cur_result_list = player_candidate[i]->get_result_card();
+        for(int j = 0; j < 5; j++){
+          if(high_result_list[j]->get_number() < cur_result_list[j]->get_number()){
+
+            winner_count = 0;
+            winner_list[winner_count] = player_candidate[i];
+            winner_count++;
+
+            high_result_list = cur_result_list;
+            first_added = true;
+            break;
+          }
+          else if(high_result_list[j]->get_number() > cur_result_list[j]->get_number()){
+            if(first_added == false){
+              winner_list[winner_count] = player_candidate[0];
+              winner_count++;
+              first_added = true;
+            }
+            break;
+          }
+          else{
+            equal_count++;
+          }
+        }
+        if(equal_count == 5){
           if(first_added == false){
-            winner_list[winner_count] = player_candidate[0];
+            winner_list[winner_count] = player_candidate[i-1];
             winner_count++;
             first_added = true;
           }
-          break;
-        }
-        else{
-          equal_count++;
-        }
-      }
-      if(equal_count == 5){
-        if(first_added == false){
-          winner_list[winner_count] = player_candidate[i-1];
+          winner_list[winner_count] = player_candidate[i];
           winner_count++;
-          first_added = true;
         }
-        winner_list[winner_count] = player_candidate[i];
-        winner_count++;
       }
     }
-  }
-  int winning_money = total_pot / winner_count;
-  for(int i = 0; i < winner_count; i++){
-    if(winner_list[i]->get_allin_status()){
-      winner_list[i]->add_money(winner_list[i]->get_current_round_bet());
-    }
-    else{
-      winner_list[i]->add_money(winning_money);
+    int winning_money = total_pot / winner_count;
+    for(int i = 0; i < winner_count; i++){
+      if(winner_list[i]->get_allin_status()){
+        winner_list[i]->add_money(winner_list[i]->get_current_round_bet());
+      }
+      else{
+        winner_list[i]->add_money(winning_money);
+      }
     }
   }
 }
 
+void table_server::all_fold_case(){
+  for(int i = 0; i < number_of_player; i++){
+    if(player_list[i]->get_player_status() == true){
+      player_list[i]->add_money(total_pot);
+    }
+  }
+}
 /*void table_server::compare(Card* cur_result_list[], Card* high_result_list[]){
   for(int j = 0; j < 5; j++){
-    if(high_result_list[j]->get_number() < cur_result_list[j]->get_number()){
+  if(high_result_list[j]->get_number() < cur_result_list[j]->get_number()){
 
-      winner_count = 0;
-      winner_list[winner_count] = player_candidate[i];
-      winner_count++;
+  winner_count = 0;
+  winner_list[winner_count] = player_candidate[i];
+  winner_count++;
 
-      high_result_list = cur_result_list;
-      first_added = true;
-      break;
-    }
-    else if(high_result_list[j]->get_number() > cur_result_list[j]->get_number()){
-      if(first_added == false){
-        winner_list[winner_count] = player_candidate[0];
-        winner_count++;
-        first_added = true;
-      }
-      break;
-    }
-    else{
-      equal_count++;
-    }
+  high_result_list = cur_result_list;
+  first_added = true;
+  break;
+  }
+  else if(high_result_list[j]->get_number() > cur_result_list[j]->get_number()){
+  if(first_added == false){
+  winner_list[winner_count] = player_candidate[0];
+  winner_count++;
+  first_added = true;
+  }
+  break;
+  }
+  else{
+  equal_count++;
+  }
   }
   if(equal_count == 5){
-    if(first_added == false){
-      winner_list[winner_count] = player_candidate[i-1];
-      winner_count++;
-      first_added = true;
-    }
-    winner_list[winner_count] = player_candidate[i];
-    winner_count++;
+  if(first_added == false){
+  winner_list[winner_count] = player_candidate[i-1];
+  winner_count++;
+  first_added = true;
+  }
+  winner_list[winner_count] = player_candidate[i];
+  winner_count++;
   }
 
-}*/
+  }*/
 void table_server::reset(){
   for(int i = 0; i < number_of_player; i++){
     player_list[i]->reset_game();
@@ -587,7 +563,7 @@ int table_server::check_straight_flush(Card* card_list[]){
     card_suit suit = card_list[i]->get_suit();
     int number = card_list[i]->get_number();
     int index = i + 1;
-    
+
     while(index < 7){
       if(number == 14){
         ace_status = true;
@@ -699,7 +675,7 @@ int table_server::check_straight(Card* card_list[]){
   for(int i = 0; i < 3; i++){
     int number = card_list[i]->get_number();
     int index = i + 1;
-    
+
     while(index < 7){
       if(number - card_list[index]->get_number() == 1){
         result_list[count - 1] = card_list[index - 1];

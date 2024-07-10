@@ -6,6 +6,10 @@ class table_server{
     Card* result_list[5];
     
     int number_of_player;
+    int active_player;
+
+    bool end_status = false;
+
     int dealer_button;
     int small_blind;
     int big_blind;
@@ -20,6 +24,8 @@ class table_server{
     void preparation();
     void add_player(player* p);
     int get_player_number();
+    int get_active_player();
+
     void set_inital_card();
     int get_current_bet();
     void add_total_pot(int amount);
@@ -40,6 +46,7 @@ class table_server{
     void reverse(Card* card_list[]);
     void swap(int left, int right, Card* card_list[]);
     int get_highest_grade();
+    void all_fold_case();
     
     int calculate_grade(Card* card_list[]);
     int check_straight_flush(Card* card_list[]);

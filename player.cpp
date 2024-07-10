@@ -83,7 +83,7 @@ int player::get_current_round_bet(){
 }
 
 int player::call(int current){
-  if(remaining_money < current){
+  if(remaining_money <= current){
     int remaining = remaining_money;
     current_round_bet = remaining_money;
     remaining_money = 0;
