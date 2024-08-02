@@ -15,6 +15,7 @@ table_server::table_server(){
   current_game = 0;
 }
 
+
 void table_server::preparation(){
 
   dcards->shuffle();
@@ -28,7 +29,7 @@ void table_server::preparation(){
   char* name = (char*)malloc(100);
   int chips;
   int decision;
-
+/*
   while(true){
     printf("1. Add player(Enter name and chips) 2.Start\n");
     std::cin >> decision;
@@ -46,6 +47,7 @@ void table_server::preparation(){
   }
 
   free(name);
+  */
 }
 
 void table_server::add_player(player* p){

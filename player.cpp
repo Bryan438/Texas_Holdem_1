@@ -4,10 +4,10 @@
 #include "card.h"
 #include "deck_of_card.h"
 #include "player.h"
+#include "transport.h"
 
-player::player(const char* name, int num, int money){
-  player_name = name;
-  player_num = num;
+player::player(int socket_id, int money){
+  client_socket = socket_id;
   remaining_money = money;
   card1 = NULL;
   card2 = NULL;
@@ -15,6 +15,40 @@ player::player(const char* name, int num, int money){
   grade = -1;
   player_status = true;
   allin_status = false;
+}
+
+int player::get_client_socket(){
+  return client_socket;
+}
+
+void player::send(transport* tp){
+  char message[50];
+  memset(message, 0, 50);
+  while(true){
+    printf("Send message? \n");
+    std::cin >> message;
+    tp->serialize(client_socket, 4, my_strlen(message), message);
+  }
+
+}
+
+int player::my_strlen(char* str){
+  int i = 0;
+  if(!str){
+    return -1;
+  }
+  while(str[i] != 0){
+    i++;
+  }
+  return i;
+}
+
+void player::set_name(char* name){
+  player_name = name;
+}
+
+void player::set_inital_bet(int bet){
+  remaining_money = bet;
 }
 
 void player::set_initial_card(Card* c1, Card* c2){

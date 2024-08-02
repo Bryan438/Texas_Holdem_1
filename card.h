@@ -1,3 +1,5 @@
+#ifndef _CARD_H_
+#define _CARD_H_
 enum card_suit{
   Diamond,
   Spade,
@@ -19,3 +21,4 @@ class Card{
     int get_number();
 };
 
+#endif

@@ -7,10 +7,13 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include "table.h"
 #include "card.h"
 #include "deck_of_card.h"
 #include "player.h"
 #include "table_server.h"
+#include "transport.h"
+#include "observer.h"
 
 void test_case_straight_flush(){
   Card* card_list[7];
@@ -179,6 +182,7 @@ void test_case_straight2(){
   card_list[0] = new Card(Club, 13);
   card_list[1] = new Card(Club, 13);
   card_list[2] = new Card(Heart, 11);
+
   card_list[3] = new Card(Spade, 10);
   card_list[4] = new Card(Heart, 9);
   card_list[5] = new Card(Club, 8);
@@ -340,8 +344,31 @@ void test_case_one_pair3(){
 
 
 int main(){
+  table* ob = new table();
+  transport *tp = new transport();
+  tp->set_listener(ob);
+  ob->set_transport(tp);
+
+  tp->start_with_thread();
+  char player_name[50];
+  memset(player_name, 0, 50);
+
+
+  while(true){
+    printf("Which player? \n");
+    std::cin >> player_name;
+    player* p = ob->search_player_by_name(player_name);
+    if(p == NULL){
+      continue;
+    }
+    p->send(tp);
+  }
+}
   
-  table_server* ts = new table_server();
+
+
+#if 0
+
   ts->preparation();
   ts->set_inital_card();
   /*
@@ -404,5 +431,6 @@ int main(){
   test_case_one_pair();
   test_case_one_pair2();
   test_case_one_pair3();*/
-}
+#endif
+
 

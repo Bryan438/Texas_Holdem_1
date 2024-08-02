@@ -1,3 +1,4 @@
+
 class table_server{
   private:
     deck_of_card* dcards;
@@ -21,6 +22,8 @@ class table_server{
     void round(int card_count);
   public:
     table_server();
+    
+    //void handle_message(message_content* msg);
     void preparation();
     void add_player(player* p);
     int get_player_number();
