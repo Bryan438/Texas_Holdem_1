@@ -10,17 +10,46 @@
 class table: public observer{
   private:
     deck_of_card* dcards = new deck_of_card();
-    transport* tp = NULL;
     player* player_list[12];
+
     int number_of_player = 0;
+
+    int big_blind = 0;
+    int small_blind = 0;
+    int current_player = 0;
     int current_game = 0;
+    int card_index;
+
+    int current_bet;
+    int current_round;
+    int total_pot;
+    int active_player;
+
+    int dealer_pos;
+    int current_pos;
+    int end_pos;
   public:
     table(){};
+    void preparation();
+    void set_initial_card();
+
     virtual void handle_message(message_content* msg, int socket_id);
-    void set_transport(transport* tp);
+
     void create_player(int client_socket);
     player* search_player_by_name(char* name);
     player* search_player_by_socket(int socket_id);
     int my_strcmp(const char* str1, const char* str2);
+
+    int get_active_player();
+    int get_current_bet();
+
+    void add_total_pot(int amount);
+    void set_current_player(int player_num);
+
+    void get_available_decision(int current_player);
+    int check_valid_input(int combined, char input);
+    void input_action(int decision, int player_num, int raise_status);
+
+    void preflop();
 };
 #endif

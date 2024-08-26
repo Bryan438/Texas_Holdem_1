@@ -19,15 +19,14 @@ void Card::show(){
     case Club:
       str_suit = "Club";
       break;
-    default:
+    case Spade:
       str_suit = "Spade";
+      break;
+    default:
+      str_suit = "Unknown";
       break;
   }
   printf("suit : %s\n number : %d\n", str_suit, number);
-}
-
-void Card::set_suit(card_suit s){
-  suit = s;
 }
 
 void Card::set_number(int n){

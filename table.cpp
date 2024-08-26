@@ -2,26 +2,18 @@
 #include <stdlib.h>
 #include <cstdio>
 #include <stdio.h>
+#include <iostream>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <sys/ioctl.h>
+#include <sys/socket.h>
+#include <unistd.h>
 #include "transport.h"
 #include "message_content.h"
 #include "table.h" 
 #include "card.h"
 
 void table::handle_message(message_content* message, int socket_id){
-  if(message->get_charmessage() != NULL){
-    printf("%s\n", message->get_charmessage());
-  }
-  else{
-    printf("%d\n", message->get_intmessage());
-  }
-  printf("%d\n", message->get_length());
-  printf("%d\n", message->get_command());
-  /*char* msg = "Echo back";
-  int temp = tp->get_client_socket();
-  tp->serialize(temp, 5, 9, msg);
-
-  */
-
   switch(message->get_command()){
     case 3: 
       create_player(message->get_intmessage());
@@ -42,14 +34,80 @@ void table::handle_message(message_content* message, int socket_id){
         }
       }
       break;
+      
+    case 1:
+      {
+        current_pos++;
+        if(current_pos >= number_of_player){
+          current_pos = 0;
+        }
+        if(current_pos != end_pos){
+          transport::get_instance()->serialize(player_list[current_pos]->get_client_socket(), 3, 0, 0);
+        }
+      }
+    case 7: 
+      {
+        preparation();
+        set_initial_card();
+        preflop();
+      }
+      break;
 
+    case 10:
+      {
+        char msg[6];
+        memset(msg, 0, 6);
+        memcpy(msg, message->get_charmessage(), 6);
+        printf("msg = %s", msg);
+        int valid_status = check_valid_input(msg[0], msg[1]);
+        int h_raise_amount = 0;
+        
+        if(valid_status == RAISE){
+          int raise_amount = 0;
+          memcpy(&raise_amount, msg + 2, 4);
+          h_raise_amount = ntohl(raise_amount);
+        }
+
+        input_action(valid_status, current_player, h_raise_amount);
+        if(valid_status == FOLD){
+          active_player--;
+        }
+
+        if(player_list[current_pos]->get_raise_status() == 1){
+          end_pos = current_pos;
+          player_list[current_pos]->reset_raise_status();
+        }
+
+        do{
+          current_pos++;
+          if(current_pos >= number_of_player){
+            current_pos = 0;
+          }
+          if(current_pos == end_pos){
+            break;
+          }
+        } while(player_list[current_pos]->get_allin_status() == true || player_list[current_pos]->get_player_status() == false);
+        if(current_pos != end_pos){
+          get_available_decision(current_pos);
+        }
+        else{
+          transport::get_instance()->serialize(player_list[current_pos]->get_client_socket(), 3, 0, 0);
+        }
+      }
+      break;
+    case 11:
+      {
+        char msg[1];
+        memcpy(msg, message->get_charmessage(), 1);
+      }
+      break;
     default:
       break;
   }
 }
 
-void table::set_transport(transport* tport){
-  tp = tport;
+void table::set_current_player(int player_num){
+  current_player = player_num;
 }
 
 void table::create_player(int client_socket){
@@ -104,11 +162,133 @@ int table::my_strcmp(const char* str1, const char* str2){
 
 void table::preparation(){
 
+  current_round = 1;
+  current_bet = 10;
   dcards->shuffle();
   dcards->show();
   card_index = 0;
 
-  dealer_button = current_game;
-  small_blind = dealer_button + 1;
-  big_blind = dealer_button + 2;
+  dealer_pos = current_game;
+  small_blind = dealer_pos + 1;
+  big_blind = dealer_pos + 2;
+
+  player_list[small_blind]->set_money(current_bet/2);
+  player_list[big_blind]->set_money(current_bet);
+  
+  transport* tp = transport::get_instance();
+  tp->serialize(player_list[dealer_pos]->get_client_socket(), 2, 20, "You, dealer");
+  tp->serialize(player_list[small_blind]->get_client_socket(), 2, 20, "You, small bind");
+  tp->serialize(player_list[big_blind]->get_client_socket(), 2, 20, "You, big_blind");
 }
+
+void table::set_initial_card(){
+  for(int i = 0; i < number_of_player; i++){
+    printf("Assign cards to player %s\n", player_list[i]->get_name());
+    player_list[i]->set_initial_card(dcards->get_card(2*i), dcards->get_card(2*i+1));
+    dcards->get_card(2*i)->show();
+    dcards->get_card(2*i+1)->show();
+    card_index += 2;
+  }
+}
+
+int table::get_current_bet(){
+  return current_bet;
+}
+
+int table::get_active_player(){
+  return active_player;
+}
+
+void table::add_total_pot(int amount){
+  total_pot += amount;
+}
+
+void table::get_available_decision(int player_num){
+
+  char msg[10];
+  memset(msg, 0, 10);
+
+  uint8_t combined = 0x00;
+  if(player_list[player_num]->get_money() <= current_bet - player_list[player_num]->get_current_round_bet()){
+    combined = FOLD | CALL;
+  }
+  else{
+    if(current_round > 1){
+      combined = FOLD | RAISE | CHECK;
+    }
+    else{
+      combined = FOLD | RAISE | CALL;
+    }
+  }
+  memcpy(msg, (char*)(&combined), 1);
+  
+  int highest_range = player_list[player_num]->get_money();
+  int lowest_range = current_bet;
+  int n_highest_range = htonl(highest_range);
+  int n_lowest_range = htonl(lowest_range);
+  memcpy(msg + 1, &n_highest_range, 4);
+  memcpy(msg + 5, &n_lowest_range, 4);
+
+  transport::get_instance()->serialize(player_list[player_num]->get_client_socket(), 8, 9, msg);
+}
+
+int table::check_valid_input(int combined, char input){
+  int decision = 0;
+  switch(input){
+    case 'F':
+    case 'f':
+      decision = FOLD;
+      break;
+    case 'R':
+    case 'r':
+      decision = RAISE;
+      break;
+    case 'c':
+    case 'C':
+      decision = CALL;
+      break;
+    case 'H':
+    case 'h':
+      decision = CHECK;
+      break;
+    default:
+      break;
+  }
+  return decision & combined ? decision : -1;
+}
+
+void table::input_action(int decision, int player_num, int raise_amount){
+  int money_added = 0;
+  switch(decision){
+    case FOLD:
+      player_list[player_num]->fold();
+      break;
+    case CALL:
+      money_added = player_list[player_num]->call(current_bet);
+      break;
+    case CHECK:
+      money_added = player_list[player_num]->call(current_bet);
+      break;
+    default:
+      money_added = player_list[player_num]->raise(raise_amount);
+      current_bet = player_list[player_num]->get_current_round_bet();
+      player_list[player_num]->set_raise_status();
+      break;
+  }
+  total_pot += money_added;
+  printf("money remaining = %d, money add = %d\n", player_list[player_num]->get_money(), money_added);
+}
+
+void table::preflop(){
+  if(current_round != 1){
+    printf("Invalid round\n");
+    return;
+  }
+  int current_pos = big_blind + 1;
+  if(current_pos >= number_of_player){
+    current_pos = 0;
+  }
+
+  get_available_decision(current_pos);
+}
+

@@ -12,8 +12,17 @@
 #include "transport.h"
 //#include "player.h"
 
+transport* transport::instance = NULL;
+
 transport::transport(){
   sockfd = -1;
+}
+
+transport* transport::get_instance(){
+  if(instance == NULL){
+    instance = new transport();
+  }
+  return instance;
 }
 
 int transport::start_server(){
@@ -25,7 +34,7 @@ int transport::start_server(){
   sockaddr_in sockaddr;
   sockaddr.sin_family = AF_INET;
   sockaddr.sin_addr.s_addr = INADDR_ANY;
-  sockaddr.sin_port = htons(4002);
+  sockaddr.sin_port = htons(4000);
 
   if (bind(sockfd, (struct sockaddr*)&sockaddr, sizeof(sockaddr)) < 0) {
     printf("Bind failed\n");
@@ -89,24 +98,41 @@ void transport::read(int client_socket){
   int n = -1;
   char buf[1000];
   int flag;
+  int hasrecvd = 0;
 
   while(true){
-    do{
-      printf("size : %ld\n" , sizeof(buf));
-      n = recv(client_socket, buf, sizeof(buf), 0);
-      flag = ioctl(client_socket, FIONREAD, &flag);
-    } while(flag > 0);
-
-    if(n <= 0){
-      printf("error\n");
-      close_client_socket(client_socket);
-      break;
-    }
-    else{
-      message_content* msg_packet = deserialize(buf);
-      p_listener->handle_message(msg_packet, client_socket);
-    }
-  }
+     do{ 
+       n = recv(client_socket, buf + hasrecvd, sizeof(buf) - hasrecvd, 0);
+       hasrecvd += n;
+       flag = ioctl(client_socket, FIONREAD, &flag);
+       printf("recv from server, n = %d, flag = %d\n", n, flag);
+     } while(flag > 0);
+     
+     if(n <= 0){
+       printf("error\n");
+       break;
+     }
+     while(hasrecvd >= 4){
+       uint32_t header = ntohl(*((int*) buf));
+       header >>= 20;
+       uint32_t length = header & 0x0FF;
+       header >>= 8; 
+       uint32_t command = header;
+ 
+       if(hasrecvd >= length + 4){
+         char* base64buf = convert_buffer_to_base64(buf, length + 4);
+         printf("length = %d, recvd buf = %s\n", length, base64buf);
+         delete[] base64buf;
+ 
+         message_content* msg_packet = deserialize(buf);
+         p_listener->handle_message(msg_packet, client_socket);
+         hasrecvd -= (length + 4);
+         if(hasrecvd > 0){
+           memcpy(buf, buf + length + 4, hasrecvd);
+         }
+       }
+     }
+   }
 }
 
 void transport::serialize(int client_socket, int command, int length, char* buf){
@@ -132,11 +158,11 @@ message_content* transport::deserialize(const char* buffer){
   int intmessage = 0;
   memset(message, 0, 30);
 
-  int header = ntohl(*((int*) buffer));
+  uint32_t header = ntohl(*((int*) buffer));
   header >>= 20;
-  int length = header & 0x0FF;
+  uint32_t length = header & 0x0FF;
   header >>= 8;
-  int command = header;
+  uint32_t command = header;
   memcpy(message, buffer+4, length);
   message_content* packet = new message_content();
   packet->set_command(command);
@@ -150,9 +176,39 @@ message_content* transport::deserialize(const char* buffer){
 }
 
 int transport::send_msg(int client_socket, char* message, int length){
+  char* base64buf = convert_buffer_to_base64(message, length);
+  printf("Sending... Socket = %d, length = %d, message = %s\n", client_socket, length, base64buf);
+  delete[] base64buf;
+
   if(send(client_socket, message, length, 0) == -1){
     printf("Error");
     return -1;
   }
   return 1;
 } 
+
+char* transport::convert_buffer_to_base64(char* message, int length){
+  char* msg = new char[2*length + 1];
+  memset(msg, 0, length*2);
+  for(int i = 0; i < length; i++){
+    char one_message = message[i];
+    char first_four = 0;
+    first_four = (one_message >> 4);
+    char base64first_four = first_four & 0x0F;
+    if(base64first_four > 9){
+      msg[2*i] = 'A' + base64first_four - 10;
+    }
+    else{
+      msg[2*i] =  base64first_four + '0';
+    }
+    char base64last_four  = one_message & 0x0F;
+    if(base64last_four > 9){
+      msg[2*i+1] = 'A' + base64last_four - 10;
+    }
+    else{
+      msg[2*i+1] =  base64last_four + '0';
+    }
+  }
+  msg[2*length + 1] = 0;
+  return msg;
+}

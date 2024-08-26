@@ -1,6 +1,12 @@
 #include <iostream>
 #include <string.h>
 #include <stdlib.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <sys/ioctl.h>
+#include <sys/socket.h>
+#include <unistd.h>
+
 #include "card.h"
 #include "deck_of_card.h"
 #include "player.h"
@@ -12,6 +18,7 @@ player::player(int socket_id, int money){
   card1 = NULL;
   card2 = NULL;
   current_round_bet = 0;
+  raise_status = 0;
   grade = -1;
   player_status = true;
   allin_status = false;
@@ -21,13 +28,13 @@ int player::get_client_socket(){
   return client_socket;
 }
 
-void player::send(transport* tp){
+void player::send(){
   char message[50];
   memset(message, 0, 50);
   while(true){
     printf("Send message? \n");
     std::cin >> message;
-    tp->serialize(client_socket, 4, my_strlen(message), message);
+    transport::get_instance()->serialize(client_socket, 4, my_strlen(message), message);
   }
 
 }
@@ -52,6 +59,22 @@ void player::set_inital_bet(int bet){
 }
 
 void player::set_initial_card(Card* c1, Card* c2){
+  int card_num1 = c1->get_number();
+  int card_num2 = c2->get_number();
+  card_suit suit1 = c1->get_suit();
+  card_suit suit2 = c2->get_suit();
+  char message[10]; 
+  memset(message, 0, 10);
+
+  int n_num1 = htonl(card_num1);
+  memcpy(message, &n_num1, 4);
+  message[4] = suit1; 
+
+  int n_num2 = htonl(card_num2);
+  memcpy(message + 5, &n_num2, 4);
+  message[9] = suit2; 
+
+  transport::get_instance()->serialize(client_socket, 6, 10, message);
   card1 = c1;
   card2 = c2;
 }
@@ -68,6 +91,14 @@ Card** player::get_result_card(){
 
 void player::set_grade(int grade_num){
   grade = grade_num;
+}
+
+void player::set_raise_status(){
+  raise_status = 1;
+}
+
+int player::get_raise_status(){
+  return raise_status;
 }
 
 int player::get_grade(){
@@ -130,14 +161,7 @@ int player::call(int current){
   return difference;
 }
 
-int player::raise(){
-  int new_amount;
-  printf("Enter the new bet : ");
-  std::cin >> new_amount;
-  if(current_round_bet > new_amount){
-    printf("Invalid input");
-    return -1;
-  }
+int player::raise(int new_amount){
   if(remaining_money == new_amount){
     int remaining = remaining_money;
     current_round_bet = remaining_money;
@@ -153,6 +177,10 @@ int player::raise(){
 
 void player::fold(){
   player_status = false;
+}
+
+void player::reset_raise_status(){
+  raise_status = 0;
 }
 
 void player::reset_round(){

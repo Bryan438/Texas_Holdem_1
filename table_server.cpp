@@ -96,6 +96,7 @@ int table_server::get_available_decision(int player_num){
       combined = FOLD | RAISE | CALL;
     }
   }
+  
   printf("Player %d, ", player_num); 
   if(combined & FOLD){
     printf(" [F]old ");

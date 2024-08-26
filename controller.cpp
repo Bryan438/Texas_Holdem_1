@@ -11,10 +11,9 @@
 #include "card.h"
 #include "deck_of_card.h"
 #include "player.h"
-#include "table_server.h"
 #include "transport.h"
 #include "observer.h"
-
+#if 0
 void test_case_straight_flush(){
   Card* card_list[7];
   card_list[0] = new Card(Club, 14);
@@ -342,14 +341,13 @@ void test_case_one_pair3(){
   ts->print_result_list();
 }
 
+#endif
 
 int main(){
   table* ob = new table();
-  transport *tp = new transport();
-  tp->set_listener(ob);
-  ob->set_transport(tp);
+  transport::get_instance()->set_listener(ob);
+  transport::get_instance()->start_with_thread();
 
-  tp->start_with_thread();
   char player_name[50];
   memset(player_name, 0, 50);
 
@@ -361,7 +359,7 @@ int main(){
     if(p == NULL){
       continue;
     }
-    p->send(tp);
+    p->send();
   }
 }
   

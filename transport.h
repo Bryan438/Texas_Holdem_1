@@ -6,12 +6,16 @@
 
 class transport{
   private:
+    transport();
+
+    static transport* instance;
     int sockfd;
     observer* p_listener = NULL;
     int client_socket_temp;
   public:
-    transport();
     ~transport(){};
+    static transport* get_instance();
+
     void disconnect();
     void close_client_socket(int cs);
     int get_client_socket(){return client_socket_temp;};
@@ -25,6 +29,7 @@ class transport{
     message_content* deserialize(const char* buf);
     int send_msg(int client_socket, char* message, int length);
     void set_listener(observer* ob);
+    char* convert_buffer_to_base64(char* message, int length);
 };
 
 #endif

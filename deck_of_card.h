@@ -1,3 +1,5 @@
+#ifndef _DECK_OF_CARD_H_
+#define _DECK_OF_CARD_H_
 class deck_of_card{
   private:
     Card* cards[52]; 
@@ -9,3 +11,5 @@ class deck_of_card{
     void shuffle();
     void show();
 };
+
+#endif

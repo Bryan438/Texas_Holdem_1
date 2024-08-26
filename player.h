@@ -2,7 +2,6 @@
 #define _PLAYER_H_
 #include "observer.h"
 #include "card.h"
-#include "transport.h"
 
 enum player_decision{
   CALL = 0x01, 
@@ -19,6 +18,7 @@ class player{
     bool allin_status;
     int player_num;
 
+    int raise_status;
     int current_round_bet;
     int remaining_money;
     int grade;
@@ -32,7 +32,7 @@ class player{
     int get_client_socket();
 
     int my_strlen(char* message);
-    void send(transport* tp);
+    void send();
 
     void set_name(char* name);
     const char* get_name();
@@ -52,6 +52,9 @@ class player{
 
     void show_card();
 
+    int get_raise_status();
+    void reset_raise_status();
+    void set_raise_status();
 
     void set_money(int change);
     void add_money(int change);
@@ -62,7 +65,7 @@ class player{
     bool get_allin_status();
 
     int call(int current);
-    int raise();
+    int raise(int raise_amount);
     void fold();
     
     void reset_round();
