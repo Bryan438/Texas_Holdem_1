@@ -78,7 +78,30 @@ void player::set_initial_card(Card* c1, Card* c2){
   card1 = c1;
   card2 = c2;
 }
-  
+
+void player::set_public_card(Card* c1, Card* c2, Card* c3){
+  card_suit suit1 = c1->get_suit();
+  card_suit suit2 = c2->get_suit();
+  card_suit suit3 = c3->get_suit();
+  char message[15]; 
+  memset(message, 0, 15);
+
+  int n_num1 = htonl(c1->get_number());
+  memcpy(message, &n_num1, 4);
+  message[4] = suit1; 
+
+  if(c2 != NULL){
+    int n_num2 = htonl(c2->get_number());
+    memcpy(message + 5, &n_num2, 4);
+    message[9] = suit2; 
+
+    int n_num3 = htonl(c3->get_number());
+    memcpy(message + 10, &n_num3, 4);
+    message[14] = suit3; 
+  }
+  transport::get_instance()->serialize(client_socket, 10, 15, message);
+}
+
 void player::set_result_card(Card* card_list[]){
   for(int i = 0; i < 5; i++){
     result_list[i] = card_list[i];
@@ -123,7 +146,7 @@ const char* player::get_name(){
 }
 
 void player::set_money(int moneychange){
-  remaining_money = remaining_money -= moneychange;
+  remaining_money = remaining_money - moneychange;
   current_round_bet += moneychange;
 }
 

@@ -42,6 +42,7 @@ class player{
 
     void set_initial_card(Card* card1, Card* card2);
     void set_result_card(Card* card_list[]);
+    void set_public_card(Card* card1, Card* card2, Card* card3);
     Card** get_result_card();
     
     void set_grade(int grade);

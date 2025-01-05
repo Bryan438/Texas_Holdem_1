@@ -42,9 +42,13 @@ void table::handle_message(message_content* message, int socket_id){
           current_pos = 0;
         }
         if(current_pos != end_pos){
-          transport::get_instance()->serialize(player_list[current_pos]->get_client_socket(), 3, 0, 0);
+          player_list[current_pos]->set_public_card(card_list[0], card_list[1], card_list[2]);
+        }
+        else{
+          round();
         }
       }
+      break;
     case 7: 
       {
         preparation();
@@ -91,16 +95,30 @@ void table::handle_message(message_content* message, int socket_id){
           get_available_decision(current_pos);
         }
         else{
-          transport::get_instance()->serialize(player_list[current_pos]->get_client_socket(), 3, 0, 0);
+          for(int j = 0; j < number_of_player; j++){
+            if(player_list[j]->get_player_status() == true){
+              player_list[j]->reset_round();
+            }
+          }
+          
+          for(int i = 0; i < 3; i++){
+            dcards->get_card(card_index)->show();
+            card_list[card_index - 2*number_of_player] = dcards->get_card(card_index);
+            card_index++;
+          }
+
+          player_list[current_pos]->set_public_card(card_list[0], card_list[1], card_list[2]);
         }
       }
       break;
+
     case 11:
       {
         char msg[1];
         memcpy(msg, message->get_charmessage(), 1);
       }
       break;
+
     default:
       break;
   }
@@ -292,3 +310,20 @@ void table::preflop(){
   get_available_decision(current_pos);
 }
 
+void table::round(){
+  current_bet = 0;
+
+  int current_pos = dealer_pos;
+  if(current_pos >= number_of_player){
+    current_pos = 0;
+  }
+  while(player_list[current_pos]->get_player_status() == false){
+    current_pos += 1;
+    if(current_pos >= number_of_player){
+      current_pos = 0;
+    }
+  }
+  int end_pos = current_pos;
+
+  get_available_decision(current_pos);
+}

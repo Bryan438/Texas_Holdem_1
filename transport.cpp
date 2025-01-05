@@ -114,7 +114,7 @@ void transport::read(int client_socket){
      }
      while(hasrecvd >= 4){
        uint32_t header = ntohl(*((int*) buf));
-       header >>= 20;
+       header >>= 16;
        uint32_t length = header & 0x0FF;
        header >>= 8; 
        uint32_t command = header;
@@ -140,9 +140,9 @@ void transport::serialize(int client_socket, int command, int length, char* buf)
   int operation = 0;
   memset(packet, 0, length+4);
 
-  command <<= 28;
+  command <<= 24;
   operation = command | operation;
-  int length_cpy = length << 20;
+  int length_cpy = length << 16;
   operation = length_cpy | operation;
   int n_operation = htonl(operation);
   memcpy(packet, &n_operation, 4);
@@ -156,16 +156,20 @@ message_content* transport::deserialize(const char* buffer){
 
   char message[50];
   int intmessage = 0;
-  memset(message, 0, 30);
+  memset(message, 0, 50);
 
   uint32_t header = ntohl(*((int*) buffer));
-  header >>= 20;
+  header >>= 16;
   uint32_t length = header & 0x0FF;
   header >>= 8;
   uint32_t command = header;
   memcpy(message, buffer+4, length);
   message_content* packet = new message_content();
   packet->set_command(command);
+
+  char* message_content = convert_buffer_to_base64(message, length + 4);
+  printf("recv message = %s\n", message_content);
+
   if(command%2 == 0){
     packet->set_charmessage(message, length);
   }

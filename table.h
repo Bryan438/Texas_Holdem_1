@@ -11,6 +11,7 @@ class table: public observer{
   private:
     deck_of_card* dcards = new deck_of_card();
     player* player_list[12];
+    Card* card_list[5];
 
     int number_of_player = 0;
 
@@ -28,6 +29,8 @@ class table: public observer{
     int dealer_pos;
     int current_pos;
     int end_pos;
+
+    int current_pos_cpy = 0;
   public:
     table(){};
     void preparation();
@@ -51,5 +54,7 @@ class table: public observer{
     void input_action(int decision, int player_num, int raise_status);
 
     void preflop();
+    void flop();
+    void round();
 };
 #endif
