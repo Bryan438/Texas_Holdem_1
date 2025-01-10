@@ -72,7 +72,7 @@ void table::handle_message(message_content* message, int socket_id){
           h_raise_amount = ntohl(raise_amount);
         }
 
-        input_action(valid_status, current_player, h_raise_amount);
+        input_action(valid_status, current_pos, h_raise_amount);
         if(valid_status == FOLD){
           active_player--;
         }
