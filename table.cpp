@@ -42,7 +42,12 @@ void table::handle_message(message_content* message, int socket_id){
           current_pos = 0;
         }
         if(current_pos != end_pos){
-          player_list[current_pos]->set_public_card(card_list[0], card_list[1], card_list[2]);
+          if(current_round == 2){
+            player_list[current_pos]->set_public_card(card_list[0], card_list[1], card_list[2]);
+          }
+          else{
+            player_list[current_pos]->set_public_card(card_list[current_round + 1], NULL, NULL);
+          }
         }
         else{
           round();
@@ -95,19 +100,7 @@ void table::handle_message(message_content* message, int socket_id){
           get_available_decision(current_pos);
         }
         else{
-          for(int j = 0; j < number_of_player; j++){
-            if(player_list[j]->get_player_status() == true){
-              player_list[j]->reset_round();
-            }
-          }
-          
-          for(int i = 0; i < 3; i++){
-            dcards->get_card(card_index)->show();
-            card_list[card_index - 2*number_of_player] = dcards->get_card(card_index);
-            card_index++;
-          }
-
-          player_list[current_pos]->set_public_card(card_list[0], card_list[1], card_list[2]);
+          reset_round();
         }
       }
       break;
@@ -302,10 +295,11 @@ void table::preflop(){
     printf("Invalid round\n");
     return;
   }
-  int current_pos = big_blind + 1;
+  current_pos = big_blind + 1;
   if(current_pos >= number_of_player){
     current_pos = 0;
   }
+  end_pos = current_pos;
 
   get_available_decision(current_pos);
 }
@@ -313,7 +307,7 @@ void table::preflop(){
 void table::round(){
   current_bet = 0;
 
-  int current_pos = dealer_pos;
+  current_pos = dealer_pos + 1;
   if(current_pos >= number_of_player){
     current_pos = 0;
   }
@@ -323,7 +317,37 @@ void table::round(){
       current_pos = 0;
     }
   }
-  int end_pos = current_pos;
-
+  end_pos = current_pos;
   get_available_decision(current_pos);
+}
+
+//Reset steps corresponding to each round
+void table::reset_round(){
+  current_bet = 0;
+  for(int j = 0; j < number_of_player; j++){
+    if(player_list[j]->get_player_status() == true){
+      player_list[j]->reset_round();
+    }
+  }
+
+  if(current_round == 1){
+    for(int i = 0; i < 3; i++){
+      dcards->get_card(card_index)->show();
+      card_list[card_index - 2*number_of_player] = dcards->get_card(card_index);
+      card_index++;
+    }
+    player_list[current_pos]->set_public_card(card_list[0], card_list[1], card_list[2]);
+  }
+  else if(current_round == 4){
+    //TODO
+    printf("Time for showdown!");
+  }
+  else{
+      dcards->get_card(card_index)->show();
+      card_list[current_round+2] = dcards->get_card(card_index);
+      card_index++;
+      player_list[current_pos]->set_public_card(card_list[current_round+2], NULL, NULL);
+  }
+
+  current_round++;
 }

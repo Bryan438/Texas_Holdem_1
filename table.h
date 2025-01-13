@@ -14,21 +14,22 @@ class table: public observer{
     Card* card_list[5];
 
     int number_of_player = 0;
+    int active_player;
+
+    int card_index;
 
     int big_blind = 0;
     int small_blind = 0;
+
     int current_player = 0;
     int current_game = 0;
-    int card_index;
-
     int current_bet;
     int current_round;
     int total_pot;
-    int active_player;
 
     int dealer_pos;
     int current_pos;
-    int end_pos;
+    int end_pos = 0;
 
     int current_pos_cpy = 0;
   public:
@@ -56,5 +57,7 @@ class table: public observer{
     void preflop();
     void flop();
     void round();
+
+    void reset_round();
 };
 #endif

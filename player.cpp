@@ -81,8 +81,12 @@ void player::set_initial_card(Card* c1, Card* c2){
 
 void player::set_public_card(Card* c1, Card* c2, Card* c3){
   card_suit suit1 = c1->get_suit();
-  card_suit suit2 = c2->get_suit();
-  card_suit suit3 = c3->get_suit();
+  card_suit suit2;
+  card_suit suit3;
+  if(c2 != NULL){
+    suit2 = c2->get_suit();
+    suit3 = c3->get_suit();
+  }
   char message[15]; 
   memset(message, 0, 15);
 
@@ -184,6 +188,7 @@ int player::call(int current){
   return difference;
 }
 
+//Current_bet and current_round_bet are different. CB is the money bet by all the player this round, CRB is only pointed to this player
 int player::raise(int new_amount){
   if(remaining_money == new_amount){
     int remaining = remaining_money;
