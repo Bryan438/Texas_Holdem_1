@@ -35,6 +35,7 @@ void table::handle_message(message_content* message, int socket_id){
       }
       break;
       
+      //Set public card(s) and head on to the next stage
     case 1:
       {
         current_pos++;
@@ -46,7 +47,7 @@ void table::handle_message(message_content* message, int socket_id){
             player_list[current_pos]->set_public_card(card_list[0], card_list[1], card_list[2]);
           }
           else{
-            player_list[current_pos]->set_public_card(card_list[current_round + 1], NULL, NULL);
+            player_list[current_pos]->set_public_card(card_list[current_round], NULL, NULL);
           }
         }
         else{
@@ -62,6 +63,7 @@ void table::handle_message(message_content* message, int socket_id){
       }
       break;
 
+      //Input for RAISE, CALL, CHECK, FOLD
     case 10:
       {
         char msg[6];
@@ -273,6 +275,7 @@ void table::input_action(int decision, int player_num, int raise_amount){
   switch(decision){
     case FOLD:
       player_list[player_num]->fold();
+      check_all_fold();
       break;
     case CALL:
       money_added = player_list[player_num]->call(current_bet);
@@ -341,13 +344,104 @@ void table::reset_round(){
   else if(current_round == 4){
     //TODO
     printf("Time for showdown!");
+    showdown();
   }
   else{
       dcards->get_card(card_index)->show();
-      card_list[current_round+2] = dcards->get_card(card_index);
+      card_list[current_round+1] = dcards->get_card(card_index);
       card_index++;
-      player_list[current_pos]->set_public_card(card_list[current_round+2], NULL, NULL);
+      player_list[current_pos]->set_public_card(card_list[current_round+1], NULL, NULL);
   }
 
   current_round++;
 }
+
+//Check after each fold if there are more than one player
+//if no, then the only one left is the winner
+void table::check_all_fold(){
+  if(get_active_player() == 1){
+    for(int i = 0; i < number_of_player; i++){
+      if(player_list[i]->get_player_status() == true){
+        player_list[i]->add_money(total_pot);
+      }
+    }
+  }
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////SHOWDOWN Below!!!///////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+void table::showdown(){
+  Card* card_cpy[7];
+  player* winner_list[12];
+  player* player_candidate[12];
+  int candidate_count = 0;
+  int winner_count = 0;
+
+  for(int i = 0; i < number_of_player; i++){
+    if(player_list[i]->get_player_status() == true){
+      for(int j = 0; j < 5; j++){
+        card_cpy[j] = card_list[j];
+      }
+      card_cpy[5] = player_list[i]->get_first_card();
+      card_cpy[6] = player_list[i]->get_second_card();
+      sort(0, 6, card_cpy);
+      reverse(card_cpy);
+      //player_list[i]->set_grade(calculate_grade(card_cpy));
+      //player_list[i]->set_result_card(result_list);
+    }
+  }
+}
+
+void table::sort(int item_from_left, int item_from_right, Card* card_list[]){
+  if(item_from_right - item_from_left < 1){
+    return;
+  }
+  int left_pos = item_from_left;
+  int right_pos = item_from_right;
+  int pivot = card_list[right_pos]->get_number();
+  bool left_check = false;
+  bool right_check = false;
+  while(item_from_left <= item_from_right){
+    if(pivot > card_list[item_from_right]->get_number()){
+      right_check = true;
+    }
+    else{
+      item_from_right--;
+    }
+    if(pivot < card_list[item_from_left]->get_number()){
+      left_check = true;
+    }
+    else{
+      item_from_left++;
+    }
+    if(left_check == true && right_check == true){
+      swap(item_from_left, item_from_right, card_list);
+      left_check = false;
+      right_check = false;
+    }
+  }
+  swap(item_from_left, right_pos, card_list);
+  sort(left_pos, item_from_left - 1, card_list);
+  sort(item_from_left + 1, right_pos, card_list);
+}
+
+void table::swap(int index1, int index2, Card* card_list[]){
+  Card* temp = card_list[index1];
+  card_list[index1] = card_list[index2];
+  card_list[index2] = temp;
+}
+
+void table::reverse(Card* card_list[]){
+  Card* temp_list[7];
+  int reverse_count = 6;
+  for(int i = 0; i < 7; i++){
+    temp_list[i] = card_list[reverse_count];
+    reverse_count--;
+  }
+  for(int j = 0; j < 7; j++){
+    card_list[j] = temp_list[j];
+  }
+}
+

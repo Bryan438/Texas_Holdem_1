@@ -11,7 +11,8 @@ class table: public observer{
   private:
     deck_of_card* dcards = new deck_of_card();
     player* player_list[12];
-    Card* card_list[5];
+    Card* card_list[7];
+    Card* result_list[5];
 
     int number_of_player = 0;
     int active_player;
@@ -53,11 +54,18 @@ class table: public observer{
     void get_available_decision(int current_player);
     int check_valid_input(int combined, char input);
     void input_action(int decision, int player_num, int raise_status);
+    void check_all_fold();
 
     void preflop();
     void flop();
     void round();
 
+    void showdown(); 
+    void sort(int left, int right, Card* card_list[]);
+    void reverse(Card* card_list[]);
+    void swap(int left, int right, Card* card_list[]);
+
+    int calculate_grade(Card* card_list[]);
     void reset_round();
 };
 #endif
