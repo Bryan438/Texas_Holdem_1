@@ -63,46 +63,69 @@ void table::handle_message(message_content* message, int socket_id){
       }
       break;
 
-      //Input for RAISE, CALL, CHECK, FOLD
+      //Input for RAISE, CALL, CHECK, FOL
     case 10:
       {
-        char msg[6];
-        memset(msg, 0, 6);
-        memcpy(msg, message->get_charmessage(), 6);
-        printf("msg = %s", msg);
-        int valid_status = check_valid_input(msg[0], msg[1]);
-        int h_raise_amount = 0;
-        
-        if(valid_status == RAISE){
-          int raise_amount = 0;
-          memcpy(&raise_amount, msg + 2, 4);
-          h_raise_amount = ntohl(raise_amount);
-        }
+        switch(current_state){
+          case IN_ROUND:
+            {
+              char msg[6];
+              memset(msg, 0, 6);
+              memcpy(msg, message->get_charmessage(), 6);
+              printf("msg = %s", msg);
+              int valid_status = check_valid_input(msg[0], msg[1]);
+              int h_raise_amount = 0;
+              
+              if(valid_status == RAISE){
+                int raise_amount = 0;
+                memcpy(&raise_amount, msg + 2, 4);
+                h_raise_amount = ntohl(raise_amount);
+              }
 
-        input_action(valid_status, current_pos, h_raise_amount);
-        if(valid_status == FOLD){
-          active_player--;
-        }
+              input_action(valid_status, current_pos, h_raise_amount);
+              if(valid_status == FOLD){
+                active_player--;
+              }
 
-        if(player_list[current_pos]->get_raise_status() == 1){
-          end_pos = current_pos;
-          player_list[current_pos]->reset_raise_status();
-        }
+              if(valid_status == RAISE) {
+                // current bet changed, notify all players
+                current_state = WAITING_NOTIFY;
+                
+                end_pos = current_pos;
+                player_list[current_pos]->reset_raise_status();
 
-        do{
-          current_pos++;
-          if(current_pos >= number_of_player){
-            current_pos = 0;
-          }
-          if(current_pos == end_pos){
+                inform_pos = current_pos;
+                inform_end_pos = current_pos;
+
+                inform_action(inform_pos);
+              } else {
+                // current bet unchange, take next player action
+                /*do{
+                  current_pos++;
+                  if(current_pos >= number_of_player){
+                    current_pos = 0;
+                  }
+                  if(current_pos == end_pos){
+                    break;
+                  }
+                } while(player_list[current_pos]->get_allin_status() == true || player_list[current_pos]->get_player_status() == false);
+
+                if(current_pos != end_pos){
+                  get_available_decision(current_pos);
+                }
+                else{
+                  reset_round();
+                }
+                */
+                get_next_player_decision();
+              }
+            }
             break;
-          }
-        } while(player_list[current_pos]->get_allin_status() == true || player_list[current_pos]->get_player_status() == false);
-        if(current_pos != end_pos){
-          get_available_decision(current_pos);
-        }
-        else{
-          reset_round();
+
+          default:
+            // error case, unexpected message
+            // print message info
+            break;
         }
       }
       break;
@@ -114,6 +137,35 @@ void table::handle_message(message_content* message, int socket_id){
       }
       break;
 
+    case 13: 
+      {
+        switch(current_state){
+          case WAITING_NOTIFY:
+            {
+              inform_pos++;
+
+              if(inform_pos >= number_of_player){
+                inform_pos = 0;
+              }
+
+              if(inform_pos != inform_end_pos){
+                // notify next player current bet has changed
+                inform_action(inform_pos);
+              }
+              else{
+                // all players have been notified, continue to play round
+                current_state = IN_ROUND;
+
+                // take next player action
+                get_next_player_decision();
+              }
+            }
+            break;
+
+          default:;
+        }
+      }
+      break;
     default:
       break;
   }
@@ -121,6 +173,25 @@ void table::handle_message(message_content* message, int socket_id){
 
 void table::set_current_player(int player_num){
   current_player = player_num;
+}
+
+void table::get_next_player_decision(){
+  do{
+    current_pos++;
+    if(current_pos >= number_of_player){
+      current_pos = 0;
+    }
+    if(current_pos == end_pos){
+      break;
+    }
+  } while(player_list[current_pos]->get_allin_status() == true || player_list[current_pos]->get_player_status() == false);
+
+  if(current_pos != end_pos){
+    get_available_decision(current_pos);
+  }
+  else{
+    reset_round();
+  }
 }
 
 void table::create_player(int client_socket){
@@ -159,7 +230,7 @@ int table::my_strcmp(const char* str1, const char* str2){
   else if(str2 == NULL){
     return 1;
   }
-  
+
   int i = 0;
   while(true){
     if(str1[i] == 0 && str2[i] == 0){
@@ -187,7 +258,8 @@ void table::preparation(){
 
   player_list[small_blind]->set_money(current_bet/2);
   player_list[big_blind]->set_money(current_bet);
-  
+  total_pot += current_bet + current_bet/2;
+
   transport* tp = transport::get_instance();
   tp->serialize(player_list[dealer_pos]->get_client_socket(), 2, 20, "You, dealer");
   tp->serialize(player_list[small_blind]->get_client_socket(), 2, 20, "You, small bind");
@@ -234,7 +306,7 @@ void table::get_available_decision(int player_num){
     }
   }
   memcpy(msg, (char*)(&combined), 1);
-  
+
   int highest_range = player_list[player_num]->get_money();
   int lowest_range = current_bet;
   int n_highest_range = htonl(highest_range);
@@ -293,6 +365,17 @@ void table::input_action(int decision, int player_num, int raise_amount){
   printf("money remaining = %d, money add = %d\n", player_list[player_num]->get_money(), money_added);
 }
 
+//Tell every player in the table current raise bet
+void table::inform_action(int player_num){
+  char msg[10];
+  memset(msg, 0, 10);
+  int h_cur_bet = htonl(current_bet);
+  int h_total_pot = htonl(total_pot);
+  memcpy(msg, &h_cur_bet, 4);
+  memcpy(msg + 4, &h_total_pot, 4);
+  transport::get_instance()->serialize(player_list[player_num]->get_client_socket(), 12, 8, msg);
+}
+
 void table::preflop(){
   if(current_round != 1){
     printf("Invalid round\n");
@@ -347,10 +430,10 @@ void table::reset_round(){
     showdown();
   }
   else{
-      dcards->get_card(card_index)->show();
-      card_list[current_round+1] = dcards->get_card(card_index);
-      card_index++;
-      player_list[current_pos]->set_public_card(card_list[current_round+1], NULL, NULL);
+    dcards->get_card(card_index)->show();
+    card_list[current_round+1] = dcards->get_card(card_index);
+    card_index++;
+    player_list[current_pos]->set_public_card(card_list[current_round+1], NULL, NULL);
   }
 
   current_round++;
@@ -388,8 +471,71 @@ void table::showdown(){
       card_cpy[6] = player_list[i]->get_second_card();
       sort(0, 6, card_cpy);
       reverse(card_cpy);
-      //player_list[i]->set_grade(calculate_grade(card_cpy));
-      //player_list[i]->set_result_card(result_list);
+      player_list[i]->set_grade(calculate_grade(card_cpy));
+      player_list[i]->set_result_card(result_list);
+    }
+  }
+  int highest_grade = get_highest_grade();
+
+  for(int i = 0; i < number_of_player; i++){
+    if(player_list[i]->get_grade() == highest_grade){
+      player_candidate[candidate_count] = player_list[i];
+      candidate_count++;
+    }
+  }
+
+  if(candidate_count == 1){
+    winner_list[0] = player_candidate[0];
+    winner_count++;
+  }
+  else{
+    Card** high_result_list = player_candidate[0]->get_result_card();
+    int equal_count = 0;
+    bool first_added = false;
+
+    for(int i = 1; i < candidate_count; i++){
+      Card** cur_result_list = player_candidate[i]->get_result_card();
+      for(int j = 0; j < 5; j++){
+        if(high_result_list[j]->get_number() < cur_result_list[j]->get_number()){
+
+          winner_count = 0;
+          winner_list[winner_count] = player_candidate[i];
+          winner_count++;
+
+          high_result_list = cur_result_list;
+          first_added = true;
+          break;
+        }
+        else if(high_result_list[j]->get_number() > cur_result_list[j]->get_number()){
+          if(first_added == false){
+            winner_list[winner_count] = player_candidate[0];
+            winner_count++;
+            first_added = true;
+          }
+          break;
+        }
+        else{
+          equal_count++;
+        }
+      }
+      if(equal_count == 5){
+        if(first_added == false){
+          winner_list[winner_count] = player_candidate[i-1];
+          winner_count++;
+          first_added = true;
+        }
+        winner_list[winner_count] = player_candidate[i];
+        winner_count++;
+      }
+    }
+  }
+  int winning_money = total_pot / winner_count;
+  for(int i = 0; i < winner_count; i++){
+    if(winner_list[i]->get_allin_status()){
+      winner_list[i]->add_money(winner_list[i]->get_current_round_bet());
+    }
+    else{
+      winner_list[i]->add_money(winning_money);
     }
   }
 }
@@ -443,5 +589,380 @@ void table::reverse(Card* card_list[]){
   for(int j = 0; j < 7; j++){
     card_list[j] = temp_list[j];
   }
+}
+
+int table::get_highest_grade(){
+  int highest_grade = -1;
+  for(int i = 0; i < number_of_player; i++){
+    int current_grade = player_list[i]->get_grade();
+    if(current_grade > highest_grade){
+      highest_grade = current_grade;
+    }
+  }
+  return highest_grade;
+}
+
+//Determine which combo this 5 cards will make
+int table::calculate_grade(Card* card_list[]){
+  int grade = 0;
+  if(check_straight_flush(card_list) == 10){
+    grade = 10;
+  }
+  else if(check_straight_flush(card_list) == 9){
+    grade = 9;
+  }
+  else if(check_four_kind(card_list) == 8){
+    grade = 8;
+  }
+  else if(check_full_house(card_list) == 7){
+    grade = 7;
+  }
+  else if(check_flush(card_list) == 6){
+    grade = 6;
+  }
+  else if(check_straight(card_list) == 5){
+    grade = 5;
+  }
+  else if(check_three_kind(card_list) == 4){
+    grade = 4;
+  }
+  else if(check_two_pairs(card_list) == 3){
+    grade = 3;
+  }
+  else if(check_one_pair(card_list) == 2){
+    grade = 2;
+  }
+  else{
+    for(int i = 0; i < 5; i++){
+      result_list[i] = card_list[i];
+    }
+    grade = 1;
+  }
+  return grade;
+}
+
+
+int table::check_straight_flush(Card* card_list[]){
+  bool ace_status = false;
+  int count = 1;
+
+  for(int i = 0; i < 3; i++){
+    card_suit suit = card_list[i]->get_suit();
+    int number = card_list[i]->get_number();
+    int index = i + 1;
+
+    while(index < 7){
+      if(number == 14){
+        ace_status = true;
+      }
+      if(card_list[index]->get_suit() == suit && number - card_list[index]->get_number() == 1){
+        result_list[count - 1] = card_list[index - 1];
+        count++;
+        if(count == 5){
+          result_list[count - 1] = card_list[index];
+          break;
+        }
+        number = card_list[index]->get_number();
+      }
+      index++;
+    }
+
+    if(count == 5){
+      break;
+    }
+
+    count = 1;
+    ace_status = false;
+  }
+  if(count < 5){
+    memset(result_list, 0, 5*sizeof(Card*));
+  }
+  return count >= 5 ? (ace_status ? 10 : 9) : -1;
+}
+
+int table::check_four_kind(Card* card_list[]){
+  int count = 0;
+  int number = card_list[0]->get_number();
+  bool single_mark = false;
+  for(int i = 1; i < 7; i++){
+    if(card_list[i]->get_number() == number){
+      result_list[count] = card_list[i-1]; 
+      count++;
+      if(count == 3){
+        result_list[count] = card_list[i]; 
+        if(single_mark == false){
+          result_list[4] = card_list[i+1]; 
+          single_mark = true;
+        }
+        break;
+      }
+    }
+    else{
+      if(single_mark == false){
+        result_list[4] = card_list[0];
+        single_mark = true;
+      }
+      count = 0;
+    }
+    number = card_list[i]->get_number();
+  }
+  if(count == 3){
+    return 8;
+  }
+  memset(result_list, 0, 5*sizeof(Card*));
+  return -1;
+}
+
+int table::check_full_house(Card* card_list[]){
+  int two_strike = 0;
+  int three_strike = 0;
+  int number = card_list[0]->get_number();
+  int triple_num = 0;
+  for(int i = 1; i < 7; i++){
+    if(card_list[i]->get_number() == number){
+      result_list[three_strike] = card_list[i - 1];
+      three_strike++;
+      if(three_strike == 2){
+        result_list[three_strike] = card_list[i];
+        triple_num = number;
+        break;
+      }
+    }
+    else{
+      three_strike = 0;
+    }
+    number = card_list[i]->get_number();
+  }
+  if(three_strike >= 2){
+    number = card_list[0]->get_number();
+    for(int j = 1; j < 7; j++){
+      if(triple_num != number){
+        if(card_list[j]->get_number() == number){
+          result_list[three_strike + two_strike + 1] = card_list[j - 1];
+          two_strike++;
+          if(two_strike == 1){
+            result_list[three_strike + two_strike + 1] = card_list[j];
+            break;
+          }
+        }
+      }
+      number = card_list[j]->get_number();
+    }
+    if(two_strike == 1){
+      return 7;
+    }
+  }
+  memset(result_list, 0, 5*sizeof(Card*));
+  return -1;
+}
+
+int table::check_straight(Card* card_list[]){
+  int count = 1;
+
+  for(int i = 0; i < 3; i++){
+    int number = card_list[i]->get_number();
+    int index = i + 1;
+
+    while(index < 7){
+      if(number - card_list[index]->get_number() == 1){
+        result_list[count - 1] = card_list[index - 1];
+        count++;
+        if(count == 5){
+          result_list[count - 1] = card_list[index];
+          break;
+        }
+        number = card_list[index]->get_number();
+      }
+      index++;
+    }
+
+    if(count == 5){
+      break;
+    }
+    count = 1;
+  }
+
+  if(count < 5){
+    memset(result_list, 0, 5*sizeof(Card*));
+  }
+
+  return count >= 5 ? 5 : -1;
+}
+
+int table::check_flush(Card* card_list[]){
+  int count = 0;
+  int spade_count = 0;
+  int club_count = 0;
+  int diamond_count = 0;
+  int heart_count = 0;
+  card_suit dest_card;
+  bool found = false;
+
+  for(int i = 0; i < 7; i++){
+    switch(card_list[i]->get_suit()){
+      case Spade:
+        spade_count++;
+        if(spade_count >= 5){
+          dest_card = Spade;
+          found = true;
+        }
+        break;
+      case Club:
+        club_count++;
+        if(club_count >= 5){
+          dest_card = Club;
+          found = true;
+        }
+        break;
+      case Diamond:
+        diamond_count++;
+        if(heart_count >= 5){
+          dest_card = Heart;
+          found = true;
+        }
+        break;
+      case Heart:
+        heart_count++;
+        if(diamond_count >= 5){
+          dest_card = Diamond;
+          found = true;
+        }
+        break;
+      default:
+        break;
+    }
+    if(found){
+      break;
+    }
+  }
+  if(found){
+    for(int i = 0; i < 7; i++){
+      if(card_list[i]->get_suit() == dest_card){
+        result_list[count] = card_list[i];
+        count++;
+        if(count == 5){
+          return 6;
+        }
+      }
+    }
+  }
+  memset(result_list, 0, 5*sizeof(Card*));
+  return -1;
+}
+
+int table::check_three_kind(Card* card_list[]){
+  int count = 0;
+  int number = card_list[0]->get_number();
+  int two_left_count = 3;
+  for(int i = 1; i < 7; i++){
+    if(card_list[i]->get_number() == number){
+      result_list[count] = card_list[i - 1];
+      count++;
+      if(count == 2){
+        result_list[count] = card_list[i];
+        while(two_left_count != 5){
+          i++;
+          result_list[two_left_count] = card_list[i];
+          two_left_count++;
+        }
+        break;
+      }
+    }
+    else{
+      if(two_left_count != 5){
+        result_list[two_left_count] = card_list[i - 1];
+        two_left_count++;
+      }
+      count = 0;
+    }
+    number = card_list[i]->get_number();
+  }
+  if(count == 2){
+    return 4;
+  }
+  memset(result_list, 0, 5*sizeof(Card*));
+  return -1;
+}
+
+int table::check_two_pairs(Card* card_list[]){
+  int two_strike = 0;
+  int number = card_list[0]->get_number();
+  int double_num = 0;
+  bool single_left = false;
+  for(int i = 1; i < 7; i++){
+    if(card_list[i]->get_number() == number){
+      result_list[two_strike] = card_list[i - 1];
+      two_strike++;
+      if(two_strike == 1){
+        result_list[two_strike] = card_list[i];
+        double_num = number;
+        break;
+      }
+    }
+    number = card_list[i]->get_number();
+    if(single_left == false){
+      result_list[4] = card_list[i - 1];
+      single_left = true;
+    }
+  }
+  if(two_strike >= 1){
+    two_strike = 0;
+    number = card_list[0]->get_number();
+    for(int j = 1; j < 7; j++){
+      if(double_num != number){
+        if(card_list[j]->get_number() == number){
+          result_list[two_strike + 2] = card_list[j - 1];
+          two_strike++;
+          if(two_strike == 1){
+            result_list[two_strike + 2] = card_list[j];
+            if(single_left == false){
+              result_list[4] = card_list[j + 1];
+            }
+            break;
+          }
+        }
+      }
+      if(single_left == false && double_num != number && number != card_list[j]->get_number()){
+        result_list[4] = card_list[j - 1];
+        single_left = true;
+      }
+      number = card_list[j]->get_number();
+    }
+    if(two_strike == 1){
+      return 3;
+    }
+  }
+  memset(result_list, 0, 5*sizeof(Card*));
+  return -1;
+}
+
+int table::check_one_pair(Card* card_list[]){
+  int count = 0;
+  int number = card_list[0]->get_number();
+  int triple_count = 2;
+  for(int i = 1; i < 7; i++){
+    if(card_list[i]->get_number() == number){
+      result_list[count] = card_list[i - 1];
+      count++;
+      if(count > 1){
+        break;
+      }
+      result_list[count] = card_list[i];
+      while(triple_count != 5){
+        result_list[triple_count] = card_list[i + 1];
+        triple_count++;
+      }
+    }
+    if(triple_count != 5){
+      result_list[triple_count] = card_list[i - 1];
+      triple_count++;
+    }
+    number = card_list[i]->get_number();
+  }
+  if(count == 1){
+    return 2;
+  }
+  memset(result_list, 0, 5*sizeof(Card*));
+  return -1;
 }
 

@@ -150,12 +150,24 @@ const char* player::get_name(){
 }
 
 void player::set_money(int moneychange){
+  char message[15]; 
+  memset(message, 0, 15);
   remaining_money = remaining_money - moneychange;
   current_round_bet += moneychange;
 }
 
 void player::add_money(int moneychange){
+  char message[8]; 
+  memset(message, 0, 8);
+  
+  int n_moneychange = htonl(moneychange);
+  memcpy(message, &n_moneychange, 4);
+
   remaining_money += moneychange;
+  int n_remaining = htonl(remaining_money);
+  memcpy(message + 4, &n_remaining, 4);
+
+  transport::get_instance()->serialize(client_socket, 12, 8, message);
 }
 
 int player::get_money(){
