@@ -1,5 +1,5 @@
 CC = g++
-CFLAGS = -Wall -g
+CFLAGS = -Wall -g 
 
 thserver: controller.o card.o deck_of_card.o player.o transport.o message_content.o table.o
 	$(CC) $(CFLAGS) -o thserver controller.o card.o deck_of_card.o player.o transport.o message_content.o table.o

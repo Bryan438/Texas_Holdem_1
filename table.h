@@ -64,7 +64,7 @@ class table: public observer{
     int check_valid_input(int combined, char input);
     void input_action(int decision, int player_num, int raise_status);
     void inform_action(int player_num);
-    void check_all_fold();
+    bool check_all_fold();
 
     void preflop();
     void flop();

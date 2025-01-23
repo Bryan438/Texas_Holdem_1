@@ -18,8 +18,10 @@ class player{
     bool allin_status;
     int player_num;
 
-    int raise_status;
     int current_round_bet;
+    int total_bet;
+
+    int raise_status;
     int remaining_money;
     int grade;
     
@@ -61,8 +63,11 @@ class player{
     void add_money(int change);
     int get_money();
     int get_current_round_bet();
+    int get_total_bet();
 
     bool get_player_status();
+
+    void set_allin_status();
     bool get_allin_status();
 
     int call(int current);

@@ -178,6 +178,10 @@ bool player::get_player_status(){
   return player_status;
 }
 
+void player::set_allin_status(){
+  allin_status = true;
+}
+
 bool player::get_allin_status(){
   return allin_status;
 }
@@ -186,9 +190,14 @@ int player::get_current_round_bet(){
   return current_round_bet;
 }
 
+int player::get_total_bet(){
+  return total_bet;
+}
+
 int player::call(int current){
   if(remaining_money <= current){
     int remaining = remaining_money;
+    total_bet += remaining_money;
     current_round_bet = remaining_money;
     remaining_money = 0;
     allin_status = true;
@@ -196,6 +205,7 @@ int player::call(int current){
   }
   int difference = current - current_round_bet;
   current_round_bet = current;
+  total_bet += difference;
   remaining_money -= difference;
   return difference;
 }
@@ -204,6 +214,7 @@ int player::call(int current){
 int player::raise(int new_amount){
   if(remaining_money == new_amount){
     int remaining = remaining_money;
+    total_bet += remaining_money;
     current_round_bet = remaining_money;
     allin_status = true;
     remaining_money = 0;
@@ -211,6 +222,7 @@ int player::raise(int new_amount){
   }
   int difference = new_amount - current_round_bet;
   current_round_bet = new_amount;
+  total_bet += difference;
   remaining_money -= difference;
   return difference;
 }

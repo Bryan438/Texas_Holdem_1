@@ -63,7 +63,7 @@ void table::handle_message(message_content* message, int socket_id){
       }
       break;
 
-      //Input for RAISE, CALL, CHECK, FOL
+      //Input for RAISE, CALL, CHECK, FOLD
     case 10:
       {
         switch(current_state){
@@ -84,7 +84,9 @@ void table::handle_message(message_content* message, int socket_id){
 
               input_action(valid_status, current_pos, h_raise_amount);
               if(valid_status == FOLD){
-                active_player--;
+                if(check_all_fold()){
+                  break;
+                }
               }
 
               if(valid_status == RAISE) {
@@ -99,24 +101,10 @@ void table::handle_message(message_content* message, int socket_id){
 
                 inform_action(inform_pos);
               } else {
-                // current bet unchange, take next player action
-                /*do{
-                  current_pos++;
-                  if(current_pos >= number_of_player){
-                    current_pos = 0;
-                  }
-                  if(current_pos == end_pos){
-                    break;
-                  }
-                } while(player_list[current_pos]->get_allin_status() == true || player_list[current_pos]->get_player_status() == false);
-
-                if(current_pos != end_pos){
-                  get_available_decision(current_pos);
-                }
-                else{
-                  reset_round();
-                }
-                */
+                /*if(check_all_allin()){
+                  showdown();
+                  break;
+                }*/
                 get_next_player_decision();
               }
             }
@@ -247,7 +235,7 @@ int table::my_strcmp(const char* str1, const char* str2){
 void table::preparation(){
 
   current_round = 1;
-  current_bet = 10;
+  current_bet = 2;
   dcards->shuffle();
   dcards->show();
   card_index = 0;
@@ -346,8 +334,8 @@ void table::input_action(int decision, int player_num, int raise_amount){
   int money_added = 0;
   switch(decision){
     case FOLD:
+      active_player--;
       player_list[player_num]->fold();
-      check_all_fold();
       break;
     case CALL:
       money_added = player_list[player_num]->call(current_bet);
@@ -391,20 +379,36 @@ void table::preflop(){
 }
 
 void table::round(){
-  current_bet = 0;
-
-  current_pos = dealer_pos + 1;
-  if(current_pos >= number_of_player){
-    current_pos = 0;
+  int remaining_player = number_of_player;
+  for(int i = 0; i < number_of_player; i++){
+    if(player_list[i]->get_player_status() || player_list[i]->get_allin_status()){
+      remaining_player--;
+    }
   }
-  while(player_list[current_pos]->get_player_status() == false){
-    current_pos += 1;
+  if(remaining_player <= 1){
+    for(int i = 0; i < number_of_player; i++){
+      if(player_list[i]->get_allin_status() == false){
+        player_list[i]->set_allin_status();
+      }
+    }
+    reset_round();
+  }
+  else{
+    current_bet = 0;
+
+    current_pos = dealer_pos + 1;
     if(current_pos >= number_of_player){
       current_pos = 0;
     }
+    while(player_list[current_pos]->get_player_status() == false){
+      current_pos += 1;
+      if(current_pos >= number_of_player){
+        current_pos = 0;
+      }
+    }
+    end_pos = current_pos;
+    get_available_decision(current_pos);
   }
-  end_pos = current_pos;
-  get_available_decision(current_pos);
 }
 
 //Reset steps corresponding to each round
@@ -425,7 +429,6 @@ void table::reset_round(){
     player_list[current_pos]->set_public_card(card_list[0], card_list[1], card_list[2]);
   }
   else if(current_round == 4){
-    //TODO
     printf("Time for showdown!");
     showdown();
   }
@@ -439,17 +442,23 @@ void table::reset_round(){
   current_round++;
 }
 
-//Check after each fold if there are more than one player
+//Check after each fold if there are more than one active player
 //if no, then the only one left is the winner
-void table::check_all_fold(){
-  if(get_active_player() == 1){
-    for(int i = 0; i < number_of_player; i++){
-      if(player_list[i]->get_player_status() == true){
-        player_list[i]->add_money(total_pot);
-      }
+bool table::check_all_fold(){
+  int remaining_player = 0;
+  for(int i = 0; i < number_of_player; i++){
+    if(player_list[i]->get_player_status() == true || player_list[i]->get_allin_status() == true){
+      remaining_player++;
     }
   }
+  if(remaining_player > 1){
+    return false;
+  }
+  else{
+    return true;
+  }
 }
+
 
 ///////////////////////////////////////////////////////////////////////////////////////////SHOWDOWN Below!!!///////////////////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -532,7 +541,8 @@ void table::showdown(){
   int winning_money = total_pot / winner_count;
   for(int i = 0; i < winner_count; i++){
     if(winner_list[i]->get_allin_status()){
-      winner_list[i]->add_money(winner_list[i]->get_current_round_bet());
+      int main_pot = 0;
+      
     }
     else{
       winner_list[i]->add_money(winning_money);
