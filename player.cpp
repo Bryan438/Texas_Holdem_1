@@ -19,9 +19,11 @@ player::player(int socket_id, int money){
   card2 = NULL;
   current_round_bet = 0;
   raise_status = 0;
+  winning_sidepot_amount = 0;
   grade = -1;
   player_status = true;
   allin_status = false;
+  need_sidepot = false;
 }
 
 int player::get_client_socket(){
@@ -154,6 +156,7 @@ void player::set_money(int moneychange){
   memset(message, 0, 15);
   remaining_money = remaining_money - moneychange;
   current_round_bet += moneychange;
+  total_bet += moneychange;
 }
 
 void player::add_money(int moneychange){
@@ -172,6 +175,14 @@ void player::add_money(int moneychange){
 
 int player::get_money(){
   return remaining_money;
+}
+
+void player::set_sidepot(int money){
+  winning_sidepot_amount = money;
+}
+
+int player::get_sidepot(){
+  return winning_sidepot_amount;
 }
 
 bool player::get_player_status(){
@@ -201,6 +212,11 @@ int player::call(int current){
     current_round_bet = remaining_money;
     remaining_money = 0;
     allin_status = true;
+    
+    //If the money of the current player is less than current bet, then the player need a sidepot
+    if(remaining_money < current){
+      need_sidepot = true;
+    }
     return remaining;
   }
   int difference = current - current_round_bet;
@@ -233,6 +249,19 @@ void player::fold(){
 
 void player::reset_raise_status(){
   raise_status = 0;
+}
+
+void player::set_needsidepot_status(){
+  if(need_sidepot == false){
+    need_sidepot = true;
+  }
+  else{
+    need_sidepot = false;
+  }
+}
+
+bool player::get_needsidepot_status(){
+  return need_sidepot;
 }
 
 void player::reset_round(){

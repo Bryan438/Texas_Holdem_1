@@ -16,6 +16,7 @@ class player{
     const char* player_name;
     bool player_status;
     bool allin_status;
+    bool need_sidepot;
     int player_num;
 
     int current_round_bet;
@@ -24,6 +25,7 @@ class player{
     int raise_status;
     int remaining_money;
     int grade;
+    int winning_sidepot_amount;
     
     Card* card1;
     Card* card2;
@@ -69,6 +71,10 @@ class player{
 
     void set_allin_status();
     bool get_allin_status();
+    void set_needsidepot_status();
+    bool get_needsidepot_status();
+    void set_sidepot(int money);
+    int get_sidepot();
 
     int call(int current);
     int raise(int raise_amount);

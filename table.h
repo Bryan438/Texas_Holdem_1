@@ -18,6 +18,7 @@ class table: public observer{
     player* player_list[12];
     Card* card_list[7];
     Card* result_list[5];
+    player* allin_player_list[12];
 
     int number_of_player = 0;
     int active_player;
@@ -33,6 +34,7 @@ class table: public observer{
     int current_bet;
     int current_round;
     int total_pot;
+    int allin_player_num = 0;
 
     int dealer_pos;
     int current_pos;
@@ -74,6 +76,8 @@ class table: public observer{
     void sort(int left, int right, Card* card_list[]);
     void reverse(Card* card_list[]);
     void swap(int left, int right, Card* card_list[]);
+    void sort_for_player(int left, int right, player* player_list[], int mode);
+    void swap_for_player(int left, int right, player* player_list[]);
 
     int get_highest_grade();
     int calculate_grade(Card* card_list[]);

@@ -6,6 +6,11 @@
 #include "player.h"
 #include "table_server.h"
 
+struct{
+  player* player;
+  bool need_sidepot;
+} allin_player;
+
 
 table_server::table_server(){
   dcards = new deck_of_card(); 
@@ -29,25 +34,6 @@ void table_server::preparation(){
   char* name = (char*)malloc(100);
   int chips;
   int decision;
-/*
-  while(true){
-    printf("1. Add player(Enter name and chips) 2.Start\n");
-    std::cin >> decision;
-    if(decision != 1){
-      break;
-    }
-
-    printf("Player name : ");
-    std::cin >> name;
-    printf("Chips : ");
-    std::cin >> chips;
-
-    player* p = new player(name, 0, chips);
-    add_player(p);
-  }
-
-  free(name);
-  */
 }
 
 void table_server::add_player(player* p){

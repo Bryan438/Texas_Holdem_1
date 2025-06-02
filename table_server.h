@@ -5,6 +5,7 @@ class table_server{
     player* player_list[12];
     Card* card_list[7];
     Card* result_list[5];
+    allin_player* allin_player_list[12];
     
     int number_of_player;
     int active_player;

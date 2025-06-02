@@ -90,6 +90,14 @@ void table::handle_message(message_content* message, int socket_id){
               }
 
               if(valid_status == RAISE) {
+                if(player_list[current_pos]->get_allin_status() == true){
+                  allin_player_list[allin_player_num] = player_list[current_pos];
+
+                  //Change the need sidepot status for all previous allin players to true
+                  for(int i = 0; i < allin_player_num - 1; i++){
+                    allin_player_list[i]->set_needsidepot_status();
+                  }
+                }
                 // current bet changed, notify all players
                 current_state = WAITING_NOTIFY;
                 
@@ -101,6 +109,10 @@ void table::handle_message(message_content* message, int socket_id){
 
                 inform_action(inform_pos);
               } else {
+                if(player_list[current_pos]->get_allin_status() == true){
+                  allin_player_list[allin_player_num] = player_list[current_pos];
+                  allin_player_num++;
+                }
                 /*if(check_all_allin()){
                   showdown();
                   break;
@@ -413,6 +425,24 @@ void table::round(){
 
 //Reset steps corresponding to each round
 void table::reset_round(){
+  
+  //Check the allin player list, check if there are allin player with the need of sidepot, if yes, then calculate the money
+  int temp_total_pot = total_pot;
+  for(int i = 0; i < allin_player_num; i++){
+    if(allin_player_list[i]->get_needsidepot_status()){
+      
+      //Check all player with bet amount larger than sidepot amount, calculate the sidepot
+      for(int j = 0; j < number_of_player; j++){
+        if(player_list[j]->get_current_round_bet() > allin_player_list[i]->get_current_round_bet()){
+          temp_total_pot -= (player_list[j]->get_current_round_bet() - allin_player_list[i]->get_current_round_bet());
+        }
+      }
+      allin_player_list[i]->set_sidepot(temp_total_pot);
+      temp_total_pot = total_pot;
+    }
+  }
+
+  //Reset the round
   current_bet = 0;
   for(int j = 0; j < number_of_player; j++){
     if(player_list[j]->get_player_status() == true){
@@ -538,6 +568,7 @@ void table::showdown(){
       }
     }
   }
+  /*
   int winning_money = total_pot / winner_count;
   for(int i = 0; i < winner_count; i++){
     if(winner_list[i]->get_allin_status()){
@@ -548,6 +579,93 @@ void table::showdown(){
       winner_list[i]->add_money(winning_money);
     }
   }
+  */
+  //Rework on the final winning condition
+  //Condition 1: Only 1 player win, if the player allin with the need of sidepot, then give them calculated money, else he/she wins the total pot
+  if(winner_count == 1){
+    if(winner_list[0]->get_needsidepot_status()){
+      winner_list[0]->add_money(winner_list[0]->get_sidepot());
+    }
+    else{
+      winner_list[0]->add_money(total_pot);
+    }
+  }
+  //Condition 2: Multiply players win
+  else{
+    //Sort the winner list first, check from the smallest if the player need sidepot
+    sort_for_player(0, winner_count, winner_list, 0);
+    //Check the first player to see if we need to calculate sidepot
+    if(winner_list[0]->get_needsidepot_status()){
+      int cur_win_pos = 0;
+      int sidepot = 0;
+      while(winner_list[cur_win_pos]->get_needsidepot_status()){
+        //Different between the first and remain players
+        if(cur_win_pos == 0){
+          sidepot = winner_list[cur_win_pos]->get_sidepot();
+        }
+        else{
+          sidepot = winner_list[cur_win_pos]->get_sidepot() - sidepot;
+        }
+        //Divide evenly for sidepot
+        for(int i = cur_win_pos; i < winner_count; i++){
+          winner_list[i]->add_money(sidepot/(winner_count - cur_win_pos));
+        }
+        cur_win_pos++;
+        total_pot = total_pot - sidepot;
+      }
+      //Even divide the rest of the money with the rest of the winners who did not
+      int winning_money = total_pot / (winner_count - cur_win_pos);
+      for(int j = cur_win_pos; j < winner_count; j++){
+        winner_list[j]->add_money(winning_money);
+        total_pot -= winning_money;
+      }
+    }
+    //All players win with the same amount, then divide the winning money evenly.
+    else{
+      int winning_money = total_pot / winner_count;
+      for(int i = 0; i < winner_count; i++){
+        winner_list[i]->add_money(winning_money);
+        total_pot -= winning_money;
+      }
+    }
+  }
+
+  //If there are remaining, add 1 to random player
+  if(total_pot < winner_count){
+    int i = 0;
+    while(total_pot != 0){
+      winner_list[i]->add_money(1);
+      total_pot--;
+      i++;
+    }
+  }
+  //There is a case when the total pot is not 0 after all the situation, then the second largest will get the remaining money
+  if(total_pot != 0){
+    sort_for_player(0, number_of_player, player_list, 1);
+    //Get the second largest, and the number of players who are second largest
+    int second_largest_grade = 0;
+    int second_pos = 0;
+    int second_count = 0;
+    int second_pos_cpy = 0;
+    for(int i = 0; i < number_of_player; i++){
+      if(player_list[i]->get_grade() != highest_grade){
+        second_largest_grade = player_list[i]->get_grade();
+        second_pos = i;
+        second_pos_cpy = i;
+        break;
+      }
+    }
+    while(player_list[second_pos]->get_grade() == second_largest_grade){
+      second_count++;
+      second_pos++;
+    }
+    int remain_for_second = total_pot / second_count;
+    for(int i = second_pos_cpy; i < second_pos; i++){
+      winner_list[i]->add_money(remain_for_second);
+      total_pot -= remain_for_second;
+    }
+  }
+
 }
 
 void table::sort(int item_from_left, int item_from_right, Card* card_list[]){
@@ -581,6 +699,72 @@ void table::sort(int item_from_left, int item_from_right, Card* card_list[]){
   swap(item_from_left, right_pos, card_list);
   sort(left_pos, item_from_left - 1, card_list);
   sort(item_from_left + 1, right_pos, card_list);
+}
+
+void table::sort_for_player(int item_from_left, int item_from_right, player* player_list[], int mode){
+  if(item_from_right - item_from_left < 1){
+    return;
+  }
+  int left_pos = item_from_left;
+  int right_pos = item_from_right;
+  int pivot = 0;
+  if(mode == 0){
+    pivot = player_list[right_pos]->get_total_bet();
+  }
+  else{
+    pivot = player_list[right_pos]->get_grade();
+  }
+  bool left_check = false;
+  bool right_check = false;
+  while(item_from_left <= item_from_right){
+    if(mode == 0){
+      if(pivot > player_list[item_from_right]->get_total_bet()){
+        right_check = true;
+      }
+      else{
+        item_from_right--;
+      }
+      if(pivot < player_list[item_from_left]->get_total_bet()){
+        left_check = true;
+      }
+      else{
+        item_from_left++;
+      }
+      if(left_check == true && right_check == true){
+        swap_for_player(item_from_left, item_from_right, player_list);
+        left_check = false;
+        right_check = false;
+      }
+    }
+    else{
+      if(pivot > player_list[item_from_right]->get_grade()){
+        right_check = true;
+      }
+      else{
+        item_from_right--;
+      }
+      if(pivot < player_list[item_from_left]->get_grade()){
+        left_check = true;
+      }
+      else{
+        item_from_left++;
+      }
+      if(left_check == true && right_check == true){
+        swap_for_player(item_from_left, item_from_right, player_list);
+        left_check = false;
+        right_check = false;
+      }
+    }
+  }
+  swap_for_player(item_from_left, right_pos, player_list);
+  sort_for_player(left_pos, item_from_left - 1, player_list, mode);
+  sort_for_player(item_from_left + 1, right_pos, player_list, mode);
+}
+
+void table::swap_for_player(int index1, int index2, player* player_list[]){
+  player* temp = player_list[index1];
+  player_list[index1] = player_list[index2];
+  player_list[index2] = temp;
 }
 
 void table::swap(int index1, int index2, Card* card_list[]){
