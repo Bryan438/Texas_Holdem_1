@@ -147,7 +147,7 @@ void player::show_card(){
   card2->show();
 }
 
-const char* player::get_name(){
+char* player::get_name(){
   return player_name;
 }
 

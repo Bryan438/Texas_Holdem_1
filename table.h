@@ -1,6 +1,7 @@
 enum state{
   WAITING_NOTIFY = 1,
-  IN_ROUND = 2
+  IN_ROUND = 2,
+  END_WAITING_NOTIFY = 3
 };
 
 #ifndef _TABLE_H_
@@ -42,6 +43,11 @@ class table: public observer{
 
     int inform_pos = 0;
     int inform_end_pos = 0;
+
+    int winner_count = 0;
+    player* winner_list[12];
+    char* winner_name;
+    int winner_length;
   public:
     table(){};
     void preparation();

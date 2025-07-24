@@ -113,10 +113,10 @@ void table::handle_message(message_content* message, int socket_id){
                   allin_player_list[allin_player_num] = player_list[current_pos];
                   allin_player_num++;
                 }
-                /*if(check_all_allin()){
+                if(check_all_fold()){
                   showdown();
                   break;
-                }*/
+                }
                 get_next_player_decision();
               }
             }
@@ -161,6 +161,20 @@ void table::handle_message(message_content* message, int socket_id){
               }
             }
             break;
+            
+          case END_WAITING_NOTIFY:
+            {
+              inform_pos++;
+
+              if(inform_pos >= number_of_player){
+                inform_pos = 0;
+              }
+              if(inform_pos != inform_end_pos){
+                transport::get_instance()->serialize(player_list[inform_pos]->get_client_socket(), 28, winner_length, winner_name);
+              }
+            }
+            break;
+            
 
           default:;
         }
@@ -393,7 +407,7 @@ void table::preflop(){
 void table::round(){
   int remaining_player = number_of_player;
   for(int i = 0; i < number_of_player; i++){
-    if(player_list[i]->get_player_status() || player_list[i]->get_allin_status()){
+    if(!player_list[i]->get_player_status() || player_list[i]->get_allin_status()){
       remaining_player--;
     }
   }
@@ -461,6 +475,14 @@ void table::reset_round(){
   else if(current_round == 4){
     printf("Time for showdown!");
     showdown();
+    current_state = END_WAITING_NOTIFY;
+    for(int i = 0; i < winner_count; i++){
+      winner_name = winner_list[i]->get_name();
+      winner_length = strlen(winner_name);
+      inform_pos = 0;
+      inform_end_pos = 0;
+      transport::get_instance()->serialize(player_list[inform_pos]->get_client_socket(), 28, winner_length, winner_name);
+    }
   }
   else{
     dcards->get_card(card_index)->show();
@@ -496,10 +518,8 @@ bool table::check_all_fold(){
 
 void table::showdown(){
   Card* card_cpy[7];
-  player* winner_list[12];
   player* player_candidate[12];
   int candidate_count = 0;
-  int winner_count = 0;
 
   for(int i = 0; i < number_of_player; i++){
     if(player_list[i]->get_player_status() == true){
@@ -585,9 +605,11 @@ void table::showdown(){
   if(winner_count == 1){
     if(winner_list[0]->get_needsidepot_status()){
       winner_list[0]->add_money(winner_list[0]->get_sidepot());
+      total_pot -= winner_list[0]->get_sidepot();
     }
     else{
       winner_list[0]->add_money(total_pot);
+      total_pot = 0;
     }
   }
   //Condition 2: Multiply players win
@@ -631,7 +653,7 @@ void table::showdown(){
   }
 
   //If there are remaining, add 1 to random player
-  if(total_pot < winner_count){
+  if(total_pot < winner_count && total_pot != 0){
     int i = 0;
     while(total_pot != 0){
       winner_list[i]->add_money(1);

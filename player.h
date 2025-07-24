@@ -13,7 +13,7 @@ enum player_decision{
 class player{
   private:
     int client_socket;
-    const char* player_name;
+    char* player_name;
     bool player_status;
     bool allin_status;
     bool need_sidepot;
@@ -39,7 +39,7 @@ class player{
     void send();
 
     void set_name(char* name);
-    const char* get_name();
+    char* get_name();
 
     void set_inital_bet(int bet);
     void set_bet(int bet);
