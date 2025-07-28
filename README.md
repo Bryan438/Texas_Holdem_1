@@ -31,27 +31,6 @@ A lightweight, headless Texas Hold’em engine that **accepts socket connections
 
 ---
 
-```mermaid
-flowchart TD
-  A[CLI / GUI clients] -- JSON/TCP --> B(Table Server)
-  B -- "observer pattern" --> C[Controller]
-  C --> D[Table]
-  D --> E[Player<br/>objects]
-  D --> F[DeckOfCard]
-  C --> G["Transport<br/>send/recv"]
-```                   <!-- ← 1) close the Mermaid fence -->
-                      <!-- ← 2) leave this line completely blank -->
-
-## Build & Run 🏗️
-
-### Server
-
-```bash
-git clone https://github.com/Bryan438/Texas_Holdem_1.git
-cd Texas_Holdem_1
-make                 # builds  ./th_server
-./th_server -p 5000  # default port
-
 
 
 
