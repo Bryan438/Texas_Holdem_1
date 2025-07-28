@@ -170,7 +170,7 @@ void player::add_money(int moneychange){
   int n_remaining = htonl(remaining_money);
   memcpy(message + 4, &n_remaining, 4);
 
-  transport::get_instance()->serialize(client_socket, 12, 8, message);
+  transport::get_instance()->serialize(client_socket, 20, 8, message);
 }
 
 int player::get_money(){

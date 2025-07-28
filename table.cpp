@@ -172,6 +172,9 @@ void table::handle_message(message_content* message, int socket_id){
               if(inform_pos != inform_end_pos){
                 transport::get_instance()->serialize(player_list[inform_pos]->get_client_socket(), 28, winner_length, winner_name);
               }
+              else{
+                current_state = IN_ROUND;
+              }
             }
             break;
             
