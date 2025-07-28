@@ -41,12 +41,11 @@ flowchart TD
   D --> F[DeckOfCard]
   C --> G["Transport<br/>send/recv"]
 
----
-
-# 1) Clone + build
+# --- Clone & build the server ---
 git clone https://github.com/Bryan438/Texas_Holdem_1.git
 cd Texas_Holdem_1
-make      
+make              # produces ./th_server
 
-# 2) Launch (default port = 4000)
+# --- Launch (default port = 4000) ---
 ./th_server -p 127.0.0.1 4000
+
