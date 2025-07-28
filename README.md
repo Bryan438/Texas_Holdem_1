@@ -28,3 +28,8 @@ flowchart TD
   D --> F[DeckOfCard]
   C --> G["Transport<br/>send/recv"]
 
+To Build Server
+git clone https://github.com/Bryan438/Texas_Holdem_1.git
+cd Texas_Holdem_1
+make  
+./th_server
