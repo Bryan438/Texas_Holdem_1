@@ -43,7 +43,6 @@ flowchart TD
 
 ---
 
-## Project Goal
 # 1) Clone + build
 git clone https://github.com/Bryan438/Texas_Holdem_1.git
 cd Texas_Holdem_1
