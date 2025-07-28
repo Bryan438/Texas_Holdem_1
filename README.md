@@ -34,10 +34,11 @@ A lightweight, headless Texas Hold’em engine that **accepts socket connections
 ## Architecture Overview
 ```mermaid
 flowchart TD
-  A[CLI / GUI clients] --JSON/TCP--> B(Table Server)
-  B -->|observer pattern| C[Controller]
+  A[CLI / GUI clients] -- JSON/TCP --> B(Table Server)
+  B -- "observer pattern" --> C[Controller]
   C --> D[Table]
   D --> E[Player<br/>objects]
   D --> F[DeckOfCard]
-  C --> G[Transport<br/>(send/recv)]
+  C --> G["Transport<br/>send/recv"]
+
 
