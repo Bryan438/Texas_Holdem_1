@@ -1,11 +1,12 @@
 #ifndef _PLAYER_H_
 #define _PLAYER_H_
+#include <string>
 #include "observer.h"
 #include "card.h"
 
 enum player_decision{
-  CALL = 0x01, 
-  RAISE = 0x02, 
+  CALL = 0x01,
+  RAISE = 0x02,
   FOLD = 0x04,
   CHECK = 0x08
 };
@@ -13,23 +14,21 @@ enum player_decision{
 class player{
   private:
     int client_socket;
-    char* player_name;
-    bool player_status;
+    std::string player_name;
+    bool player_status;   // false once folded (or sitting out this hand)
     bool allin_status;
-    bool need_sidepot;
-    int player_num;
 
-    int current_round_bet;
-    int total_bet;
+    int current_round_bet; // chips put in during the current betting round
+    int total_bet;         // chips put in during the whole hand
 
     int raise_status;
     int remaining_money;
-    int grade;
-    int winning_sidepot_amount;
-    
+    int grade;             // hand score from hand_evaluator, -1 if none
+
     Card* card1;
     Card* card2;
-    Card* result_list[5];
+
+    int put_in(int amount);
   public:
     player(int client_socket, int money);
 
@@ -38,17 +37,14 @@ class player{
     int my_strlen(char* message);
     void send();
 
-    void set_name(char* name);
-    char* get_name();
+    void set_name(const char* name);
+    const char* get_name();
 
     void set_inital_bet(int bet);
-    void set_bet(int bet);
 
     void set_initial_card(Card* card1, Card* card2);
-    void set_result_card(Card* card_list[]);
     void set_public_card(Card* card1, Card* card2, Card* card3);
-    Card** get_result_card();
-    
+
     void set_grade(int grade);
     int get_grade();
 
@@ -61,7 +57,7 @@ class player{
     void reset_raise_status();
     void set_raise_status();
 
-    void set_money(int change);
+    int post_blind(int amount);
     void add_money(int change);
     int get_money();
     int get_current_round_bet();
@@ -71,15 +67,11 @@ class player{
 
     void set_allin_status();
     bool get_allin_status();
-    void set_needsidepot_status();
-    bool get_needsidepot_status();
-    void set_sidepot(int money);
-    int get_sidepot();
 
     int call(int current);
     int raise(int raise_amount);
     void fold();
-    
+
     void reset_round();
     void reset_game();
 };

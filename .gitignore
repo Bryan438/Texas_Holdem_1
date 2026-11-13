@@ -1,0 +1,4 @@
+thserver
+*.o
+tests/run_tests
+*.dSYM/

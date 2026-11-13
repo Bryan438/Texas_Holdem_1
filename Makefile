@@ -1,29 +1,28 @@
-CC = g++
-CFLAGS = -Wall -g 
+CXX ?= c++
+CXXFLAGS = -std=c++17 -Wall -g -pthread
 
-thserver: controller.o card.o deck_of_card.o player.o transport.o message_content.o table.o
-	$(CC) $(CFLAGS) -o thserver controller.o card.o deck_of_card.o player.o transport.o message_content.o table.o
+SRCS = card.cpp deck_of_card.cpp player.cpp transport.cpp message_content.cpp \
+       table.cpp hand_evaluator.cpp pot_calculator.cpp
+OBJS = $(SRCS:.cpp=.o)
+HEADERS = $(wildcard *.h)
 
-controller.o: card.h controller.cpp deck_of_card.h player.h message_content.h observer.h table.h
-	$(CC) $(CFLAGS) -c controller.cpp
+thserver: controller.o $(OBJS)
+	$(CXX) $(CXXFLAGS) -o $@ $^
 
-card.o: card.h card.cpp
-	$(CC) $(CFLAGS) -c card.cpp
+%.o: %.cpp $(HEADERS)
+	$(CXX) $(CXXFLAGS) -c $<
 
-deck_of_card.o: deck_of_card.h deck_of_card.cpp
-	$(CC) $(CFLAGS) -c deck_of_card.cpp
-  
-player.o: player.h player.cpp
-	$(CC) $(CFLAGS) -c player.cpp
+# Tests build with AddressSanitizer + UBSan so memory bugs fail loudly.
+TEST_FLAGS = $(CXXFLAGS) -I. -fsanitize=address,undefined -fno-omit-frame-pointer
+TEST_SRCS = $(wildcard tests/*.cpp)
 
-transport.o: transport.h transport.cpp
-	$(CC) $(CFLAGS) -c transport.cpp
- 
-message_content.o: message_content.h message_content.cpp
-	$(CC) $(CFLAGS) -c message_content.cpp
+tests/run_tests: $(TEST_SRCS) $(SRCS) $(HEADERS) tests/test_framework.h
+	$(CXX) $(TEST_FLAGS) -o $@ $(TEST_SRCS) $(SRCS)
 
-table.o: table.h table.cpp observer.h
-	$(CC) $(CFLAGS) -c table.cpp
-  
+test: tests/run_tests
+	./tests/run_tests
+
 clean:
-	rm -f *.o thserver
+	rm -f *.o thserver tests/run_tests
+
+.PHONY: test clean

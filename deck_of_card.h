@@ -1,5 +1,7 @@
 #ifndef _DECK_OF_CARD_H_
 #define _DECK_OF_CARD_H_
+#include "card.h"
+
 class deck_of_card{
   private:
     Card* cards[52]; 

@@ -18,12 +18,11 @@ player::player(int socket_id, int money){
   card1 = NULL;
   card2 = NULL;
   current_round_bet = 0;
+  total_bet = 0;
   raise_status = 0;
-  winning_sidepot_amount = 0;
   grade = -1;
   player_status = true;
   allin_status = false;
-  need_sidepot = false;
 }
 
 int player::get_client_socket(){
@@ -52,8 +51,9 @@ int player::my_strlen(char* str){
   return i;
 }
 
-void player::set_name(char* name){
-  player_name = name;
+void player::set_name(const char* name){
+  // Copy: the buffer we get comes from a network message that is freed later.
+  player_name = name != NULL ? name : "";
 }
 
 void player::set_inital_bet(int bet){
@@ -108,16 +108,6 @@ void player::set_public_card(Card* c1, Card* c2, Card* c3){
   transport::get_instance()->serialize(client_socket, 10, 15, message);
 }
 
-void player::set_result_card(Card* card_list[]){
-  for(int i = 0; i < 5; i++){
-    result_list[i] = card_list[i];
-  }
-}
-
-Card** player::get_result_card(){
-  return result_list;
-}
-
 void player::set_grade(int grade_num){
   grade = grade_num;
 }
@@ -147,16 +137,27 @@ void player::show_card(){
   card2->show();
 }
 
-char* player::get_name(){
-  return player_name;
+const char* player::get_name(){
+  return player_name.c_str();
 }
 
-void player::set_money(int moneychange){
-  char message[15]; 
-  memset(message, 0, 15);
-  remaining_money = remaining_money - moneychange;
-  current_round_bet += moneychange;
-  total_bet += moneychange;
+// Move up to `amount` chips from the stack into the pot. Going to zero means all-in.
+int player::put_in(int amount){
+  if(amount < 0){
+    amount = 0;
+  }
+  if(amount >= remaining_money){
+    amount = remaining_money;
+    allin_status = true;
+  }
+  remaining_money -= amount;
+  current_round_bet += amount;
+  total_bet += amount;
+  return amount;
+}
+
+int player::post_blind(int amount){
+  return put_in(amount);
 }
 
 void player::add_money(int moneychange){
@@ -175,14 +176,6 @@ void player::add_money(int moneychange){
 
 int player::get_money(){
   return remaining_money;
-}
-
-void player::set_sidepot(int money){
-  winning_sidepot_amount = money;
-}
-
-int player::get_sidepot(){
-  return winning_sidepot_amount;
 }
 
 bool player::get_player_status(){
@@ -205,42 +198,14 @@ int player::get_total_bet(){
   return total_bet;
 }
 
+// Match the current bet. If the stack is too small this is an all-in for less.
 int player::call(int current){
-  if(remaining_money <= current){
-    int remaining = remaining_money;
-    total_bet += remaining_money;
-    current_round_bet = remaining_money;
-    remaining_money = 0;
-    allin_status = true;
-    
-    //If the money of the current player is less than current bet, then the player need a sidepot
-    if(remaining_money < current){
-      need_sidepot = true;
-    }
-    return remaining;
-  }
-  int difference = current - current_round_bet;
-  current_round_bet = current;
-  total_bet += difference;
-  remaining_money -= difference;
-  return difference;
+  return put_in(current - current_round_bet);
 }
 
-//Current_bet and current_round_bet are different. CB is the money bet by all the player this round, CRB is only pointed to this player
+// Raise so this round's bet becomes `new_amount` in total (all-in if the stack runs out).
 int player::raise(int new_amount){
-  if(remaining_money == new_amount){
-    int remaining = remaining_money;
-    total_bet += remaining_money;
-    current_round_bet = remaining_money;
-    allin_status = true;
-    remaining_money = 0;
-    return remaining;
-  }
-  int difference = new_amount - current_round_bet;
-  current_round_bet = new_amount;
-  total_bet += difference;
-  remaining_money -= difference;
-  return difference;
+  return put_in(new_amount - current_round_bet);
 }
 
 void player::fold(){
@@ -251,19 +216,6 @@ void player::reset_raise_status(){
   raise_status = 0;
 }
 
-void player::set_needsidepot_status(){
-  if(need_sidepot == false){
-    need_sidepot = true;
-  }
-  else{
-    need_sidepot = false;
-  }
-}
-
-bool player::get_needsidepot_status(){
-  return need_sidepot;
-}
-
 void player::reset_round(){
   current_round_bet = 0;
 }
@@ -272,6 +224,11 @@ void player::reset_game(){
   player_status = true;
   allin_status = false;
   current_round_bet = 0;
+  total_bet = 0;
+  raise_status = 0;
+  grade = -1;
+  card1 = NULL;
+  card2 = NULL;
 }
 
 
