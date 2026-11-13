@@ -1,550 +1,589 @@
-#include <string.h>
-#include <stdlib.h>
+#include <algorithm>
+#include <chrono>
 #include <cstdio>
-#include <string>
-#include <vector>
-#include <iostream>
-#include <arpa/inet.h>
-#include "transport.h"
-#include "message_content.h"
 #include "table.h"
-#include "card.h"
 #include "hand_evaluator.h"
 #include "pot_calculator.h"
 
+static int64_t steady_ms(){
+  using namespace std::chrono;
+  return duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
+}
+
+static const char* stage_name(stage s){
+  switch(s){
+    case PREFLOP: return "preflop";
+    case FLOP: return "flop";
+    case TURN: return "turn";
+    case RIVER: return "river";
+    default: return "waiting";
+  }
+}
+
+table::table(sender* o, table_config c, clock_fn clock)
+  : out(o), config(c), now_ms(clock ? clock : steady_ms) {}
+
 table::~table(){
-  for(int i = 0; i < number_of_player; i++){
-    delete player_list[i];
-  }
-  delete dcards;
+  delete deck;
 }
 
-void table::handle_message(message_content* message, int socket_id){
-  switch(message->get_command()){
-    // New connection (sent by transport, not by a client)
-    case 3:
-      create_player(socket_id);
-      break;
+// ---------------------------------------------------------------- messages
 
-    // Player name
-    case 4:
-      {
-        player* p = search_player_by_socket(socket_id);
-        if(p != NULL && message->get_charmessage() != NULL){
-          p->set_name(message->get_charmessage());
-        }
-      }
-      break;
+void table::on_connect(int client){
+  send(client, {{"type", "hello"},
+                {"message", "Send {\"type\":\"join\",\"name\":\"<your name>\"} to sit down"}});
+}
 
-    // Starting chips, only between hands
-    case 5:
-      {
-        player* p = search_player_by_socket(socket_id);
-        if(p != NULL && current_state == HAND_OVER && message->get_intmessage() > 0){
-          p->set_inital_bet(message->get_intmessage());
-        }
-      }
-      break;
+void table::on_message(int client, const std::string& line){
+  json msg = json::parse(line, nullptr, false);
+  if(msg.is_discarded() || !msg.is_object() || !msg.contains("type") || !msg["type"].is_string()){
+    send_error(client, "bad message: expected a JSON object with a \"type\" field");
+    return;
+  }
+  std::string type = msg["type"].get<std::string>();
 
-    // Ack for public card(s): hand them to the next player, or start the next betting round
-    case 1:
-      {
-        if(current_state != IN_ROUND || !dealing){
-          break;
-        }
-        if(player_list[current_pos]->get_client_socket() != socket_id){
-          printf("Unexpected card ack from socket %d\n", socket_id);
-          break;
-        }
-        current_pos++;
-        if(current_pos >= number_of_player){
-          current_pos = 0;
-        }
-        if(current_pos != end_pos){
-          if(current_round == 2){
-            player_list[current_pos]->set_public_card(card_list[0], card_list[1], card_list[2]);
-          }
-          else{
-            player_list[current_pos]->set_public_card(card_list[current_round], NULL, NULL);
-          }
-        }
-        else{
-          dealing = false;
-          round();
-        }
-      }
-      break;
-
-    // Start a new hand
-    case 7:
-      {
-        if(current_state != HAND_OVER){
-          printf("A hand is already running\n");
-          break;
-        }
-        if(!preparation()){
-          break;
-        }
-        set_initial_card();
-        preflop();
-      }
-      break;
-
-    //Input for RAISE, CALL, CHECK, FOLD
-    case 10:
-      handle_action(message, socket_id);
-      break;
-
-    // Ack that a player saw the new bet
-    case 13:
-      {
-        if(current_state != WAITING_NOTIFY){
-          break;
-        }
-        if(player_list[inform_pos]->get_client_socket() != socket_id){
-          printf("Unexpected bet ack from socket %d\n", socket_id);
-          break;
-        }
-        inform_pos++;
-        if(inform_pos >= number_of_player){
-          inform_pos = 0;
-        }
-
-        if(inform_pos != inform_end_pos){
-          // notify next player current bet has changed
-          inform_action(inform_pos);
-        }
-        else{
-          // all players have been notified, continue to play round
-          current_state = IN_ROUND;
-          get_next_player_decision();
-        }
-      }
-      break;
-
-    default:
-      break;
+  if(type == "join"){
+    handle_join(client, msg);
+    return;
+  }
+  if(seat_of(client) < 0){
+    send_error(client, "join the table first");
+    return;
+  }
+  if(type == "start"){
+    handle_start(client);
+  }
+  else if(type == "action"){
+    handle_action(client, msg);
+  }
+  else{
+    send_error(client, "unknown message type: " + type);
   }
 }
 
-void table::handle_action(message_content* message, int socket_id){
-  if(current_state != IN_ROUND || dealing){
-    printf("Not waiting for an action\n");
+void table::on_disconnect(int client){
+  int s = seat_of(client);
+  if(s < 0){
     return;
   }
-  if(player_list[current_pos]->get_client_socket() != socket_id){
-    printf("Socket %d acted out of turn\n", socket_id);
+  player& p = *seats[s];
+  p.connected = false;
+  p.socket = -1;
+  event(p.name + " disconnected");
+
+  if(current_stage != WAITING && p.in_hand){
+    fold_seat(s);
+    event(p.name + " folds (disconnected)");
+    if(turn == s || count_in_hand() <= 1){
+      continue_hand(s);
+      return;
+    }
+  }
+  broadcast_state();
+}
+
+void table::handle_join(int client, const json& msg){
+  if(seat_of(client) >= 0){
+    send_error(client, "you are already seated");
     return;
   }
-  if(message->get_length() < 2){
-    get_available_decision(current_pos);
+  if(!msg.contains("name") || !msg["name"].is_string()){
+    send_error(client, "join needs a \"name\"");
+    return;
+  }
+  std::string name = msg["name"].get<std::string>();
+  name.erase(0, name.find_first_not_of(' '));
+  name.erase(name.find_last_not_of(' ') + 1);
+  bool printable = std::all_of(name.begin(), name.end(), [](char c){ return (unsigned char)c >= 0x20; });
+  if(name.empty() || name.size() > 24 || !printable){
+    send_error(client, "name must be 1-24 printable characters");
     return;
   }
 
-  char msg[6];
-  memset(msg, 0, 6);
-  memcpy(msg, message->get_charmessage(), message->get_length() < 6 ? message->get_length() : 6);
-
-  // Check against what the server allows, not the bitmask the client echoes back.
-  int decision = check_valid_input(available_decisions(current_pos), msg[1]);
-  int raise_to = 0;
-
-  if(decision == RAISE){
-    uint32_t n_raise = 0;
-    memcpy(&n_raise, msg + 2, 4);
-    raise_to = (int)ntohl(n_raise);
-    player* p = player_list[current_pos];
-    int max_total = p->get_money() + p->get_current_round_bet();
-    if(message->get_length() < 6 || raise_to <= current_bet || raise_to > max_total){
-      decision = -1;
+  // Same name as a disconnected player: take that seat (and its chips) back.
+  for(size_t i = 0; i < seats.size(); i++){
+    if(seats[i]->name == name){
+      if(seats[i]->connected){
+        send_error(client, "name \"" + name + "\" is taken");
+        return;
+      }
+      seats[i]->socket = client;
+      seats[i]->connected = true;
+      send(client, {{"type", "welcome"}, {"seat", (int)i}, {"name", name}});
+      event(name + " reconnected");
+      broadcast_state();
+      return;
     }
   }
 
-  if(decision == -1){
-    printf("Invalid action, asking again\n");
-    get_available_decision(current_pos);
+  int s = -1;
+  if(seats.size() < MAX_PLAYERS){
+    seats.emplace_back(new player());
+    s = seats.size() - 1;
+  }
+  else if(current_stage == WAITING){
+    for(size_t i = 0; i < seats.size(); i++){
+      if(!seats[i]->connected){
+        seats[i].reset(new player());
+        s = i;
+        break;
+      }
+    }
+  }
+  if(s < 0){
+    send_error(client, "the table is full");
     return;
   }
 
-  input_action(decision, current_pos, raise_to);
+  player& p = *seats[s];
+  p.socket = client;
+  p.name = name;
+  p.stack = config.starting_stack;
+  send(client, {{"type", "welcome"}, {"seat", s}, {"name", name}});
+  event(name + " joined" + (current_stage == WAITING ? "" : " (plays from the next hand)"));
+  broadcast_state();
+}
 
-  if(count_in_hand() <= 1){
-    // Everyone else folded
-    finish_hand();
+void table::handle_start(int client){
+  if(current_stage != WAITING){
+    send_error(client, "a hand is already running");
     return;
   }
-
-  if(decision == RAISE){
-    // current bet changed, notify all players, then everyone else acts again
-    current_state = WAITING_NOTIFY;
-    end_pos = current_pos;
-    player_list[current_pos]->reset_raise_status();
-
-    inform_pos = current_pos;
-    inform_end_pos = current_pos;
-    inform_action(inform_pos);
-  }
-  else{
-    get_next_player_decision();
+  if(!start_hand()){
+    send_error(client, "need at least 2 connected players with chips");
   }
 }
 
-// Next seat clockwise after `from` that is still in the hand (and, if asked,
-// not all-in). Returns -1 if there is none.
-int table::next_seat_in_hand(int from, bool skip_allin){
-  for(int k = 1; k <= number_of_player; k++){
-    int seat = (from + k) % number_of_player;
-    player* p = player_list[seat];
-    if(p->get_player_status() && !(skip_allin && p->get_allin_status())){
-      return seat;
+void table::handle_action(int client, const json& msg){
+  int s = seat_of(client);
+  if(current_stage == WAITING){
+    send_error(client, "no hand is running");
+    return;
+  }
+  if(s != turn){
+    send_error(client, "it is not your turn");
+    return;
+  }
+  std::string action = msg.contains("action") && msg["action"].is_string() ? msg["action"].get<std::string>() : "";
+  int amount = msg.contains("amount") && msg["amount"].is_number_integer() ? msg["amount"].get<int>() : 0;
+
+  std::string error;
+  if(!apply_action(s, action, amount, error)){
+    send_error(client, error);
+    send(client, state_for(s));
+    return;
+  }
+  continue_hand(s);
+}
+
+void table::tick(){
+  if(current_stage == WAITING || turn < 0 || config.turn_seconds <= 0){
+    return;
+  }
+  if(now_ms() < turn_deadline){
+    return;
+  }
+  int s = turn;
+  player& p = *seats[s];
+  event(p.name + " ran out of time");
+  std::string error;
+  apply_action(s, to_call(p) == 0 ? "check" : "fold", 0, error);
+  continue_hand(s);
+}
+
+// ---------------------------------------------------------------- game flow
+
+bool table::start_hand(){
+  auto eligible = [](const player& p){ return p.connected && p.stack > 0; };
+  int ready = std::count_if(seats.begin(), seats.end(), [&](const std::unique_ptr<player>& p){ return eligible(*p); });
+  if(ready < 2){
+    return false;
+  }
+
+  for(auto& p : seats){
+    p->reset_for_hand();
+    if(eligible(*p)){
+      p->dealt = true;
+      p->in_hand = true;
+    }
+  }
+  for(int i = 0; i < 5; i++){
+    board[i] = nullptr;
+  }
+  board_count = 0;
+  card_index = 0;
+  reveal_cards = false;
+  last_result.clear();
+  hand_count++;
+
+  auto dealt_in = [](const player& p){ return p.in_hand; };
+  dealer = next_seat(dealer < 0 ? (int)seats.size() - 1 : dealer, dealt_in);
+  // Heads-up: the dealer posts the small blind.
+  small_blind_seat = ready == 2 ? dealer : next_seat(dealer, dealt_in);
+  big_blind_seat = next_seat(small_blind_seat, dealt_in);
+
+  deck->shuffle();
+  for(auto& p : seats){
+    if(p->in_hand){
+      p->cards[0] = deck->get_card(card_index++);
+      p->cards[1] = deck->get_card(card_index++);
+    }
+  }
+
+  current_stage = PREFLOP;
+  int sb = seats[small_blind_seat]->put_in(config.small_blind);
+  int bb = seats[big_blind_seat]->put_in(config.big_blind);
+  current_bet = config.big_blind;
+  last_raise_size = config.big_blind;
+
+  event("Hand #" + std::to_string(hand_count) + " - dealer " + seats[dealer]->name);
+  event(seats[small_blind_seat]->name + " posts small blind " + std::to_string(sb));
+  event(seats[big_blind_seat]->name + " posts big blind " + std::to_string(bb));
+
+  continue_hand(big_blind_seat);
+  return true;
+}
+
+bool table::apply_action(int s, const std::string& action, int amount, std::string& error){
+  player& p = *seats[s];
+  int call_amount = to_call(p);
+
+  if(action == "fold"){
+    fold_seat(s);
+    event(p.name + " folds");
+    return true;
+  }
+  if(action == "check"){
+    if(call_amount > 0){
+      error = "cannot check: " + std::to_string(call_amount) + " to call";
+      return false;
+    }
+    p.acted = true;
+    event(p.name + " checks");
+    return true;
+  }
+  if(action == "call"){
+    if(call_amount == 0){
+      error = "nothing to call, check instead";
+      return false;
+    }
+    int put = p.put_in(call_amount);
+    p.acted = true;
+    event(p.name + " calls " + std::to_string(put) + (p.all_in ? " and is all-in" : ""));
+    return true;
+  }
+  if(action == "raise"){
+    int max_to = p.round_bet + p.stack;
+    if(p.stack <= call_amount){
+      error = "not enough chips to raise: call (all-in) or fold";
+      return false;
+    }
+    int min_to = std::min(get_min_raise_to(), max_to);
+    if(amount < min_to || amount > max_to){
+      error = "raise must be to between " + std::to_string(min_to) + " and " + std::to_string(max_to);
+      return false;
+    }
+    bool was_bet = current_bet == 0;
+    int raise_size = amount - current_bet;
+    p.put_in(amount - p.round_bet);
+    p.acted = true;
+    // A full raise reopens the betting for everyone else. A short all-in does
+    // not, though players facing it still have to call the difference.
+    if(raise_size >= last_raise_size){
+      last_raise_size = raise_size;
+      for(auto& other : seats){
+        if(other.get() != &p && other->in_hand && !other->all_in){
+          other->acted = false;
+        }
+      }
+    }
+    current_bet = amount;
+    event(p.name + (was_bet ? " bets " : " raises to ") + std::to_string(amount) + (p.all_in ? " (all-in)" : ""));
+    return true;
+  }
+  error = "unknown action \"" + action + "\" (use fold, check, call or raise)";
+  return false;
+}
+
+// After any change: give the turn to the next player, deal the next street,
+// or end the hand.
+void table::continue_hand(int from){
+  if(count_in_hand() <= 1){
+    finish_hand();
+    return;
+  }
+  int next = next_seat(from, [this](const player& p){ return needs_to_act(p); });
+  if(next >= 0){
+    begin_turn(next);
+    broadcast_state();
+    return;
+  }
+  // Betting round is over.
+  while(true){
+    if(current_stage == RIVER){
+      finish_hand();
+      return;
+    }
+    deal_next_street();
+    if(count_can_act() >= 2){
+      begin_turn(next_seat(dealer, [this](const player& p){ return needs_to_act(p); }));
+      broadcast_state();
+      return;
+    }
+    // Everyone (or all but one) is all-in: no betting, keep dealing.
+  }
+}
+
+void table::deal_next_street(){
+  for(auto& p : seats){
+    p->reset_for_round();
+  }
+  current_bet = 0;
+  last_raise_size = config.big_blind;
+  turn = -1;
+
+  if(current_stage == PREFLOP){
+    for(int i = 0; i < 3; i++){
+      board[board_count++] = deck->get_card(card_index++);
+    }
+    current_stage = FLOP;
+    event("Flop: " + board[0]->text() + " " + board[1]->text() + " " + board[2]->text());
+  }
+  else{
+    board[board_count++] = deck->get_card(card_index++);
+    current_stage = current_stage == FLOP ? TURN : RIVER;
+    event(std::string(current_stage == TURN ? "Turn: " : "River: ") + board[board_count - 1]->text());
+  }
+}
+
+void table::finish_hand(){
+  int n = seats.size();
+  std::vector<int> contributions(n, 0);
+  std::vector<bool> in_hand(n, false);
+  std::vector<int> scores(n, 0);
+
+  bool showdown = count_in_hand() > 1 && board_count == 5;
+  for(int i = 0; i < n; i++){
+    player& p = *seats[i];
+    contributions[i] = p.total_bet;
+    in_hand[i] = p.in_hand;
+    if(p.in_hand && showdown){
+      const Card* seven[7] = {board[0], board[1], board[2], board[3], board[4], p.cards[0], p.cards[1]};
+      p.score = evaluate_best(seven, 7);
+      scores[i] = p.score;
+      event(p.name + " shows " + p.cards[0]->text() + " " + p.cards[1]->text() + " - " +
+            hand_category_name(hand_category_of(p.score)));
+    }
+  }
+
+  std::vector<int> payout = distribute_pot(contributions, in_hand, scores, (dealer + 1) % n);
+
+  last_result.clear();
+  for(int i = 0; i < n; i++){
+    if(payout[i] <= 0){
+      continue;
+    }
+    seats[i]->stack += payout[i];
+    std::string hand = showdown && in_hand[i] ? hand_category_name(hand_category_of(scores[i])) : "";
+    last_result.push_back({i, payout[i], hand});
+    event(seats[i]->name + " wins " + std::to_string(payout[i]) + (hand.empty() ? "" : " with " + hand));
+  }
+
+  for(auto& p : seats){
+    p->reset_for_round();   // no bets left on the table between hands
+  }
+  reveal_cards = showdown;
+  current_stage = WAITING;
+  turn = -1;
+  current_bet = 0;
+  event("Hand over. Send start for the next hand.");
+  broadcast_state();
+}
+
+void table::begin_turn(int s){
+  turn = s;
+  turn_deadline = config.turn_seconds > 0 ? now_ms() + config.turn_seconds * 1000LL : 0;
+}
+
+void table::fold_seat(int s){
+  seats[s]->in_hand = false;
+  seats[s]->acted = true;
+}
+
+// ---------------------------------------------------------------- helpers
+
+int table::next_seat(int from, const std::function<bool(const player&)>& pred) const{
+  int n = seats.size();
+  for(int k = 1; k <= n; k++){
+    int s = ((from + k) % n + n) % n;
+    if(pred(*seats[s])){
+      return s;
     }
   }
   return -1;
 }
 
-int table::count_in_hand(){
-  int remaining = 0;
-  for(int i = 0; i < number_of_player; i++){
-    if(player_list[i]->get_player_status()){
-      remaining++;
-    }
-  }
-  return remaining;
+bool table::needs_to_act(const player& p) const{
+  return p.in_hand && !p.all_in && (!p.acted || p.round_bet < current_bet);
 }
 
-void table::get_next_player_decision(){
-  do{
-    current_pos++;
-    if(current_pos >= number_of_player){
-      current_pos = 0;
-    }
-    if(current_pos == end_pos){
-      break;
-    }
-  } while(player_list[current_pos]->get_allin_status() == true || player_list[current_pos]->get_player_status() == false);
+int table::count_in_hand() const{
+  return std::count_if(seats.begin(), seats.end(), [](const std::unique_ptr<player>& p){ return p->in_hand; });
+}
 
-  if(current_pos != end_pos){
-    get_available_decision(current_pos);
+int table::count_can_act() const{
+  return std::count_if(seats.begin(), seats.end(), [](const std::unique_ptr<player>& p){ return p->in_hand && !p->all_in; });
+}
+
+int table::to_call(const player& p) const{
+  return std::max(0, current_bet - p.round_bet);
+}
+
+int table::get_pot() const{
+  if(current_stage == WAITING){
+    return 0;
+  }
+  int pot = 0;
+  for(auto& p : seats){
+    pot += p->total_bet;
+  }
+  return pot;
+}
+
+int table::get_min_raise_to() const{
+  return current_bet + last_raise_size;
+}
+
+int table::seat_of(int client) const{
+  for(size_t i = 0; i < seats.size(); i++){
+    if(seats[i]->connected && seats[i]->socket == client){
+      return i;
+    }
+  }
+  return -1;
+}
+
+// ---------------------------------------------------------------- output
+
+json table::state_for(int viewer) const{
+  json st;
+  st["type"] = "state";
+  st["hand"] = hand_count;
+  st["stage"] = stage_name(current_stage);
+  st["you"] = viewer;
+  st["pot"] = get_pot();
+  st["current_bet"] = current_bet;
+  st["dealer"] = dealer;
+  st["small_blind"] = current_stage == WAITING ? -1 : small_blind_seat;
+  st["big_blind"] = current_stage == WAITING ? -1 : big_blind_seat;
+  st["turn"] = turn;
+  st["blinds"] = {config.small_blind, config.big_blind};
+
+  if(turn >= 0 && config.turn_seconds > 0){
+    st["turn_time_left"] = std::max<int64_t>(0, (turn_deadline - now_ms() + 999) / 1000);
   }
   else{
-    reset_round();
+    st["turn_time_left"] = nullptr;
   }
-}
 
-void table::create_player(int client_socket){
-  if(number_of_player >= MAX_PLAYERS){
-    printf("Table is full, rejecting socket %d\n", client_socket);
-    transport::get_instance()->close_client_socket(client_socket);
-    return;
+  json board_codes = json::array();
+  for(int i = 0; i < board_count; i++){
+    board_codes.push_back(board[i]->code());
   }
-  player* new_player = new player(client_socket, 50);
-  if(current_state != HAND_OVER){
-    // Joined in the middle of a hand: sit out until the next one.
-    new_player->fold();
-  }
-  player_list[number_of_player] = new_player;
-  number_of_player++;
-}
+  st["board"] = board_codes;
 
-player* table::search_player_by_name(const char* player_name){
-  for(int i = 0; i < number_of_player; i++){
-    if(strcmp(player_name, player_list[i]->get_name()) == 0){
-      return player_list[i];
+  json seat_list = json::array();
+  for(size_t i = 0; i < seats.size(); i++){
+    const player& p = *seats[i];
+    std::string status;
+    if(!p.connected){
+      status = "disconnected";
     }
-  }
-  printf("Wrong name\n");
-  return NULL;
-}
-
-player* table::search_player_by_socket(int socket_id){
-  for(int i = 0; i < number_of_player; i++){
-    if(socket_id == player_list[i]->get_client_socket()){
-      return player_list[i];
-    }
-  }
-  printf("Wrong id\n");
-  return NULL;
-}
-
-// Set up a new hand: reset players, move the button, post blinds.
-// Returns false if fewer than two players have chips.
-bool table::preparation(){
-  int ready = 0;
-  for(int i = 0; i < number_of_player; i++){
-    player_list[i]->reset_game();
-    if(player_list[i]->get_money() <= 0){
-      player_list[i]->fold(); // busted, sits out
+    else if(current_stage != WAITING){
+      status = !p.dealt ? "sitting_out" : !p.in_hand ? "folded" : p.all_in ? "allin" : "active";
     }
     else{
-      ready++;
+      status = p.stack > 0 ? "ready" : "busted";
+    }
+
+    json s = {{"seat", (int)i}, {"name", p.name}, {"stack", p.stack}, {"bet", p.round_bet},
+              {"total_bet", p.total_bet}, {"status", status}};
+    bool show = p.cards[0] != nullptr && ((int)i == viewer || (reveal_cards && p.in_hand));
+    if(show){
+      s["cards"] = {p.cards[0]->code(), p.cards[1]->code()};
+    }
+    else{
+      s["cards"] = nullptr;
+    }
+    if(reveal_cards && p.in_hand && p.score > 0){
+      s["hand"] = hand_category_name(hand_category_of(p.score));
+    }
+    seat_list.push_back(s);
+  }
+  st["seats"] = seat_list;
+
+  // The viewer's current best hand, once there is a flop.
+  if(viewer >= 0 && viewer < (int)seats.size() && seats[viewer]->cards[0] && board_count >= 3){
+    const player& p = *seats[viewer];
+    const Card* cards[7] = {p.cards[0], p.cards[1]};
+    for(int i = 0; i < board_count; i++){
+      cards[2 + i] = board[i];
+    }
+    st["your_hand"] = hand_category_name(hand_category_of(evaluate_best(cards, 2 + board_count)));
+  }
+
+  if(current_stage != WAITING && turn == viewer && viewer >= 0){
+    const player& p = *seats[viewer];
+    int call_amount = to_call(p);
+    json actions = {{"fold", true}, {"check", call_amount == 0},
+                    {"call", call_amount > 0 ? std::min(call_amount, p.stack) : 0}};
+    if(p.stack > call_amount){
+      int max_to = p.round_bet + p.stack;
+      actions["raise"] = {{"min", std::min(get_min_raise_to(), max_to)}, {"max", max_to}};
+    }
+    else{
+      actions["raise"] = nullptr;
+    }
+    st["actions"] = actions;
+  }
+
+  if(current_stage == WAITING && !last_result.empty()){
+    json result = json::array();
+    for(const hand_result_entry& r : last_result){
+      result.push_back({{"seat", r.seat}, {"name", seats[r.seat]->name}, {"amount", r.amount}, {"hand", r.hand}});
+    }
+    st["result"] = result;
+  }
+  return st;
+}
+
+void table::broadcast_state(){
+  for(size_t i = 0; i < seats.size(); i++){
+    if(seats[i]->connected){
+      send(seats[i]->socket, state_for(i));
     }
   }
-  if(ready < 2){
-    printf("Need at least 2 players with chips to start\n");
-    return false;
-  }
-
-  for(int i = 0; i < 5; i++){
-    card_list[i] = NULL;
-  }
-
-  if(current_game == 0){
-    dealer_pos = next_seat_in_hand(number_of_player - 1, false);
-  }
-  else{
-    dealer_pos = next_seat_in_hand(dealer_pos, false);
-  }
-  current_game++;
-
-  // Heads-up: the dealer posts the small blind.
-  small_blind = ready == 2 ? dealer_pos : next_seat_in_hand(dealer_pos, false);
-  big_blind = next_seat_in_hand(small_blind, false);
-
-  current_round = 1;
-  card_index = 0;
-  total_pot = 0;
-  current_bet = BIG_BLIND;
-  dealing = false;
-  dcards->shuffle();
-
-  total_pot += player_list[small_blind]->post_blind(BIG_BLIND / 2);
-  total_pot += player_list[big_blind]->post_blind(BIG_BLIND);
-
-  transport* tp = transport::get_instance();
-  const char* dealer_msg = "You, dealer";
-  const char* small_msg = "You, small blind";
-  const char* big_msg = "You, big blind";
-  tp->serialize(player_list[dealer_pos]->get_client_socket(), 2, strlen(dealer_msg), dealer_msg);
-  tp->serialize(player_list[small_blind]->get_client_socket(), 2, strlen(small_msg), small_msg);
-  tp->serialize(player_list[big_blind]->get_client_socket(), 2, strlen(big_msg), big_msg);
-
-  current_state = IN_ROUND;
-  return true;
 }
 
-void table::set_initial_card(){
-  for(int i = 0; i < number_of_player; i++){
-    if(!player_list[i]->get_player_status()){
-      continue;
-    }
-    player_list[i]->set_initial_card(dcards->get_card(card_index), dcards->get_card(card_index + 1));
-    card_index += 2;
+void table::event(const std::string& text){
+  if(config.log_events){
+    printf("[table] %s\n", text.c_str());
   }
-}
-
-int table::get_current_bet(){
-  return current_bet;
-}
-
-int table::available_decisions(int player_num){
-  player* p = player_list[player_num];
-  int to_call = current_bet - p->get_current_round_bet();
-  if(p->get_money() <= to_call){
-    // Can only call all-in or fold
-    return FOLD | CALL;
-  }
-  return FOLD | RAISE | (to_call == 0 ? CHECK : CALL);
-}
-
-void table::get_available_decision(int player_num){
-
-  char msg[10];
-  memset(msg, 0, 10);
-
-  uint8_t combined = available_decisions(player_num);
-  memcpy(msg, (char*)(&combined), 1);
-
-  // Raise range is the new total bet for this round: above the current bet,
-  // up to everything this player has.
-  player* p = player_list[player_num];
-  int highest_range = p->get_money() + p->get_current_round_bet();
-  int lowest_range = current_bet;
-  int n_highest_range = htonl(highest_range);
-  int n_lowest_range = htonl(lowest_range);
-  memcpy(msg + 1, &n_highest_range, 4);
-  memcpy(msg + 5, &n_lowest_range, 4);
-
-  transport::get_instance()->serialize(p->get_client_socket(), 8, 9, msg);
-}
-
-int table::check_valid_input(int combined, char input){
-  int decision = 0;
-  switch(input){
-    case 'F':
-    case 'f':
-      decision = FOLD;
-      break;
-    case 'R':
-    case 'r':
-      decision = RAISE;
-      break;
-    case 'c':
-    case 'C':
-      decision = CALL;
-      break;
-    case 'H':
-    case 'h':
-      decision = CHECK;
-      break;
-    default:
-      break;
-  }
-  return decision & combined ? decision : -1;
-}
-
-void table::input_action(int decision, int player_num, int raise_amount){
-  int money_added = 0;
-  switch(decision){
-    case FOLD:
-      player_list[player_num]->fold();
-      break;
-    case CALL:
-    case CHECK:
-      money_added = player_list[player_num]->call(current_bet);
-      break;
-    case RAISE:
-      money_added = player_list[player_num]->raise(raise_amount);
-      current_bet = player_list[player_num]->get_current_round_bet();
-      player_list[player_num]->set_raise_status();
-      break;
-    default:
-      return;
-  }
-  total_pot += money_added;
-  printf("money remaining = %d, money add = %d\n", player_list[player_num]->get_money(), money_added);
-}
-
-//Tell a player the current bet and pot after a raise
-void table::inform_action(int player_num){
-  char msg[8];
-  memset(msg, 0, 8);
-  int h_cur_bet = htonl(current_bet);
-  int h_total_pot = htonl(total_pot);
-  memcpy(msg, &h_cur_bet, 4);
-  memcpy(msg + 4, &h_total_pot, 4);
-  transport::get_instance()->serialize(player_list[player_num]->get_client_socket(), 12, 8, msg);
-}
-
-void table::preflop(){
-  if(current_round != 1){
-    printf("Invalid round\n");
-    return;
-  }
-  current_pos = next_seat_in_hand(big_blind, true);
-  if(current_pos == -1){
-    // Everyone is all-in from the blinds: just deal the board.
-    current_pos = big_blind;
-    reset_round();
-    return;
-  }
-  end_pos = current_pos;
-  get_available_decision(current_pos);
-}
-
-// Start a betting round after public cards were handed out.
-void table::round(){
-  int can_act = 0;
-  for(int i = 0; i < number_of_player; i++){
-    if(player_list[i]->get_player_status() && !player_list[i]->get_allin_status()){
-      can_act++;
+  json msg = {{"type", "event"}, {"text", text}};
+  for(auto& p : seats){
+    if(p->connected){
+      send(p->socket, msg);
     }
   }
-  if(can_act <= 1){
-    // Nobody left to bet against: deal the next card straight away.
-    reset_round();
-    return;
-  }
-
-  current_bet = 0;
-  current_pos = next_seat_in_hand(dealer_pos, true);
-  end_pos = current_pos;
-  get_available_decision(current_pos);
 }
 
-// A betting round is over: deal the next public card(s), or go to showdown.
-void table::reset_round(){
-  current_bet = 0;
-  for(int j = 0; j < number_of_player; j++){
-    player_list[j]->reset_round();
+void table::send(int client, const json& msg){
+  if(out != nullptr && client >= 0){
+    // replace invalid UTF-8 instead of throwing
+    out->send_line(client, msg.dump(-1, ' ', false, json::error_handler_t::replace));
   }
-
-  if(current_round >= 4){
-    finish_hand();
-    return;
-  }
-
-  // Cards are handed to players one by one, each acking with command 1,
-  // starting and ending at the current seat.
-  end_pos = current_pos;
-  dealing = true;
-  if(current_round == 1){
-    for(int i = 0; i < 3; i++){
-      card_list[i] = dcards->get_card(card_index);
-      card_index++;
-    }
-    player_list[current_pos]->set_public_card(card_list[0], card_list[1], card_list[2]);
-  }
-  else{
-    card_list[current_round + 1] = dcards->get_card(card_index);
-    card_index++;
-    player_list[current_pos]->set_public_card(card_list[current_round + 1], NULL, NULL);
-  }
-
-  current_round++;
 }
 
-// Score hands (if there is a showdown), pay out main and side pots, tell everyone.
-void table::finish_hand(){
-  int n = number_of_player;
-  std::vector<int> contributions(n, 0);
-  std::vector<bool> in_hand(n, false);
-  std::vector<int> scores(n, 0);
-
-  bool showdown = count_in_hand() > 1 && card_list[4] != NULL;
-  for(int i = 0; i < n; i++){
-    player* p = player_list[i];
-    contributions[i] = p->get_total_bet();
-    in_hand[i] = p->get_player_status();
-    if(in_hand[i] && showdown){
-      const Card* seven[7] = {card_list[0], card_list[1], card_list[2], card_list[3], card_list[4],
-                              p->get_first_card(), p->get_second_card()};
-      scores[i] = evaluate_best(seven, 7);
-      p->set_grade(scores[i]);
-    }
-  }
-
-  std::vector<int> payout = distribute_pot(contributions, in_hand, scores, (dealer_pos + 1) % n);
-
-  std::string result = "Hand over.";
-  for(int i = 0; i < n; i++){
-    if(payout[i] <= 0){
-      continue;
-    }
-    player_list[i]->add_money(payout[i]);
-    result += " ";
-    result += player_list[i]->get_name();
-    result += " wins " + std::to_string(payout[i]);
-    if(showdown){
-      result += " (";
-      result += hand_category_name(hand_category_of(scores[i]));
-      result += ")";
-    }
-    result += ";";
-  }
-  printf("%s\n", result.c_str());
-
-  total_pot = 0;
-  dealing = false;
-  current_state = HAND_OVER;
-
-  if(result.size() > MAX_PAYLOAD){
-    result.resize(MAX_PAYLOAD);
-  }
-  broadcast(28, result.c_str(), result.size());
-}
-
-void table::broadcast(int command, const char* msg, int length){
-  for(int i = 0; i < number_of_player; i++){
-    transport::get_instance()->serialize(player_list[i]->get_client_socket(), command, length, msg);
-  }
+void table::send_error(int client, const std::string& message){
+  send(client, {{"type", "error"}, {"message", message}});
 }

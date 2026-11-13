@@ -1,88 +1,134 @@
 #ifndef _TABLE_H_
 #define _TABLE_H_
 
+#include <cstdint>
+#include <functional>
+#include <memory>
+#include <string>
+#include <vector>
+#include "third_party/json.hpp"
 #include "observer.h"
-#include "transport.h"
 #include "player.h"
 #include "card.h"
 #include "deck_of_card.h"
 
-enum state{
-  WAITING_NOTIFY = 1, // a raise is being announced to every player one by one
-  IN_ROUND = 2,       // waiting for a player's action or a public-card ack
-  HAND_OVER = 3       // no hand running; command 7 starts the next one
-};
+using json = nlohmann::json;
 
 #define MAX_PLAYERS 12
-#define BIG_BLIND 2
 
+struct table_config{
+  int starting_stack = 200;
+  int small_blind = 1;
+  int big_blind = 2;
+  int turn_seconds = 30;   // 0 = no time limit
+  bool log_events = true;  // print events on the server console
+};
+
+enum stage{
+  WAITING = 0,  // no hand running; any seated player can send "start"
+  PREFLOP,
+  FLOP,
+  TURN,
+  RIVER
+};
+
+struct hand_result_entry{
+  int seat;
+  int amount;
+  std::string hand;  // hand name if there was a showdown
+};
+
+// Client -> server messages (one JSON object per line):
+//   {"type":"join","name":"Bryan"}
+//   {"type":"start"}
+//   {"type":"action","action":"fold|check|call|raise","amount":20}
+//     amount = total bet for this round after the raise ("raise to")
+//
+// Server -> client messages:
+//   {"type":"welcome","seat":0,"name":"Bryan"}
+//   {"type":"state", ...}   full table as this player may see it, after every change
+//   {"type":"event","text":"Bob raises to 20"}
+//   {"type":"error","message":"..."}
 class table: public observer{
+  public:
+    using clock_fn = std::function<int64_t()>;  // milliseconds, monotonic
+
+    table(sender* out, table_config config = table_config(), clock_fn clock = nullptr);
+    ~table();
+
+    // observer
+    void on_connect(int client) override;
+    void on_message(int client, const std::string& line) override;
+    void on_disconnect(int client) override;
+
+    // Call regularly (e.g. every 500 ms) to enforce the turn time limit.
+    void tick();
+
+    // Read-only view, used by tests
+    stage get_stage() const { return current_stage; }
+    int get_turn() const { return turn; }
+    int get_dealer() const { return dealer; }
+    int get_current_bet() const { return current_bet; }
+    int get_pot() const;
+    int get_min_raise_to() const;
+    int seat_count() const { return seats.size(); }
+    const player& seat(int i) const { return *seats[i]; }
+    int seat_of(int client) const;
+    int hand_number() const { return hand_count; }
+    int board_size() const { return board_count; }
+
+    // Set a seat's chips between hands (tests; could back an admin command).
+    void set_stack(int seat, int chips){ if(current_stage == WAITING) seats[seat]->stack = chips; }
+
   private:
-    deck_of_card* dcards = new deck_of_card();
-    player* player_list[MAX_PLAYERS];
-    Card* card_list[5] = {NULL, NULL, NULL, NULL, NULL}; // community cards
+    sender* out;
+    table_config config;
+    clock_fn now_ms;
+    deck_of_card* deck = new deck_of_card();
 
-    int number_of_player = 0;
-    state current_state = HAND_OVER;
-
+    std::vector<std::unique_ptr<player>> seats;
+    const Card* board[5] = {nullptr, nullptr, nullptr, nullptr, nullptr};
+    int board_count = 0;
     int card_index = 0;
 
-    int big_blind = 0;
-    int small_blind = 0;
-
-    int current_game = 0;
+    stage current_stage = WAITING;
+    int hand_count = 0;
+    int dealer = -1;
+    int small_blind_seat = -1;
+    int big_blind_seat = -1;
+    int turn = -1;
+    int64_t turn_deadline = 0;
     int current_bet = 0;
-    int current_round = 0;
-    int total_pot = 0;
+    int last_raise_size = 0;
+    bool reveal_cards = false;          // showdown: everyone sees hands still in
+    std::vector<hand_result_entry> last_result;
 
-    int dealer_pos = 0;
-    int current_pos = 0;
-    int end_pos = 0;
+    // Message handlers
+    void handle_join(int client, const json& msg);
+    void handle_start(int client);
+    void handle_action(int client, const json& msg);
 
-    int inform_pos = 0;
-    int inform_end_pos = 0;
-
-    bool dealing = false; // public cards are being handed out, waiting for acks (command 1)
-
-    void handle_action(message_content* msg, int socket_id);
-    int available_decisions(int player_num);
-  public:
-    table(){};
-    ~table();
-    bool preparation();
-    void set_initial_card();
-
-    virtual void handle_message(message_content* msg, int socket_id);
-
-    void create_player(int client_socket);
-    player* search_player_by_name(const char* name);
-    player* search_player_by_socket(int socket_id);
-
-    int get_current_bet();
-    int get_total_pot(){return total_pot;};
-    int get_player_count(){return number_of_player;};
-    player* get_player(int seat){return player_list[seat];};
-    int get_current_pos(){return current_pos;};
-    int get_dealer_pos(){return dealer_pos;};
-    state get_state(){return current_state;};
-    bool is_dealing(){return dealing;};
-    int get_inform_pos(){return inform_pos;};
-
-    int next_seat_in_hand(int from, bool skip_allin);
-    int count_in_hand();
-
-    void get_available_decision(int current_player);
-    void get_next_player_decision();
-
-    int check_valid_input(int combined, char input);
-    void input_action(int decision, int player_num, int raise_status);
-    void inform_action(int player_num);
-
-    void preflop();
-    void round();
-    void reset_round();
-
+    // Game flow
+    bool start_hand();
+    bool apply_action(int seat, const std::string& action, int amount, std::string& error);
+    void continue_hand(int from);
+    void deal_next_street();
     void finish_hand();
-    void broadcast(int command, const char* msg, int length);
+    void begin_turn(int seat);
+    void fold_seat(int seat);
+
+    int next_seat(int from, const std::function<bool(const player&)>& pred) const;
+    bool needs_to_act(const player& p) const;
+    int count_in_hand() const;
+    int count_can_act() const;
+    int to_call(const player& p) const;
+
+    // Output
+    json state_for(int viewer) const;
+    void broadcast_state();
+    void event(const std::string& text);
+    void send(int client, const json& msg);
+    void send_error(int client, const std::string& message);
 };
+
 #endif

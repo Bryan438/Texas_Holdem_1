@@ -1,21 +1,20 @@
-#include <iostream>
-#include <string.h>
-#include <stdlib.h>
+#include <cstdio>
+#include <cstring>
 #include <signal.h>
 #include <sys/socket.h>
-#include <cstring>
+#include <sys/time.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <thread>
-#include "observer.h"
+#include <vector>
 #include "transport.h"
+#include "line_buffer.h"
 
 transport* transport::instance = NULL;
 
 transport::transport(){
   sockfd = -1;
-  client_socket_temp = -1;
 }
 
 transport* transport::get_instance(){
@@ -37,64 +36,84 @@ int transport::start_server(int port){
   int reuse = 1;
   setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
 
-  sockaddr_in sockaddr;
-  memset(&sockaddr, 0, sizeof(sockaddr));
-  sockaddr.sin_family = AF_INET;
-  sockaddr.sin_addr.s_addr = INADDR_ANY;
-  sockaddr.sin_port = htons(port);
+  sockaddr_in addr;
+  memset(&addr, 0, sizeof(addr));
+  addr.sin_family = AF_INET;
+  addr.sin_addr.s_addr = INADDR_ANY;
+  addr.sin_port = htons(port);
 
-  if (bind(sockfd, (struct sockaddr*)&sockaddr, sizeof(sockaddr)) < 0) {
-    printf("Bind failed\n");
+  if(bind(sockfd, (struct sockaddr*)&addr, sizeof(addr)) < 0){
+    printf("Bind failed (is port %d already in use?)\n", port);
     return -1;
   }
-
-  if (listen(sockfd, 10) < 0) {
+  if(listen(sockfd, 16) < 0){
     printf("Listen failed\n");
     return -1;
   }
+  printf("Listening on port %d\n", port);
 
-  socklen_t addrlen = sizeof(sockaddr);
   while(true){
-    printf("Awaiting... \n");
-    int client_socket = accept(sockfd, (struct sockaddr*)&sockaddr, &addrlen);
-    //Temp to be removed
-    client_socket_temp = client_socket;
-
-    if (client_socket < 0) {
-      printf("Accept failed\n");
-    } else {
-      message_content* ini_msg = new message_content();
-      ini_msg->set_command(3);
-      ini_msg->set_intmessage(client_socket);
-
-      dispatch(ini_msg, client_socket);
-      read_with_thread(client_socket);
+    sockaddr_in client_addr;
+    socklen_t addrlen = sizeof(client_addr);
+    int client_socket = accept(sockfd, (struct sockaddr*)&client_addr, &addrlen);
+    if(client_socket < 0){
+      continue;
     }
+    // A client that stops reading must not freeze the whole table.
+    timeval timeout = {2, 0};
+    setsockopt(client_socket, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+    printf("Client %d connected from %s\n", client_socket, inet_ntoa(client_addr.sin_addr));
+
+    run_locked([&]{
+      if(p_listener) p_listener->on_connect(client_socket);
+    });
+    read_with_thread(client_socket);
   }
 }
 
-void transport::set_listener(observer* ob){
-  p_listener = ob;
-}
-
-void transport::dispatch(message_content* msg, int client_socket){
-  {
-    std::lock_guard<std::mutex> guard(dispatch_lock);
-    if(p_listener != NULL){
-      p_listener->handle_message(msg, client_socket);
-    }
-  }
-  delete msg;
-}
-
-void transport::start_with_thread(){
-  std::thread thread_start(&transport::start_server, this, 4000);
-  thread_start.detach();
+void transport::start_with_thread(int port){
+  std::thread t(&transport::start_server, this, port);
+  t.detach();
 }
 
 void transport::read_with_thread(int client_socket){
-  std::thread thread_read(&transport::read, this, client_socket);
-  thread_read.detach();
+  std::thread t(&transport::read, this, client_socket);
+  t.detach();
+}
+
+void transport::read(int client_socket){
+  line_buffer buffer;
+  char chunk[4096];
+  std::vector<std::string> lines;
+
+  while(true){
+    int n = recv(client_socket, chunk, sizeof(chunk), 0);
+    if(n <= 0){
+      break;
+    }
+    lines.clear();
+    bool ok = buffer.feed(chunk, n, lines);
+    for(const std::string& line : lines){
+      if(verbose){
+        printf("<- %d: %s\n", client_socket, line.c_str());
+      }
+      run_locked([&]{
+        if(p_listener) p_listener->on_message(client_socket, line);
+      });
+    }
+    if(!ok){
+      printf("Client %d sent a line that is too long, disconnecting\n", client_socket);
+      break;
+    }
+  }
+
+  // Tell the game first, then close: once closed the fd number can be reused
+  // by a new connection.
+  run_locked([&]{
+    if(p_listener) p_listener->on_disconnect(client_socket);
+  });
+  close(client_socket);
+  printf("Client %d disconnected\n", client_socket);
 }
 
 void transport::disconnect(){
@@ -104,117 +123,31 @@ void transport::disconnect(){
   }
 }
 
-void transport::close_client_socket(int client_socket){
-  if(client_socket != -1){
-    close(client_socket);
-  }
+void transport::set_listener(observer* ob){
+  p_listener = ob;
 }
 
-void transport::decode_header(const char* buf, int* command, int* length){
-  uint32_t header;
-  memcpy(&header, buf, 4);
-  header = ntohl(header);
-  *command = (header >> 24) & 0xFF;
-  *length = (header >> 16) & 0xFF;
+void transport::run_locked(const std::function<void()>& fn){
+  std::lock_guard<std::mutex> guard(dispatch_lock);
+  fn();
 }
 
-// Reads frames from one client until it disconnects. TCP is a byte stream:
-// one recv() can return half a frame or several frames, so bytes are kept in
-// `buf` until a whole frame is there.
-void transport::read(int client_socket){
-  char buf[1024];
-  int hasrecvd = 0;
-
-  while(true){
-    int n = recv(client_socket, buf + hasrecvd, sizeof(buf) - hasrecvd, 0);
-    if(n <= 0){
-      printf("Client %d disconnected\n", client_socket);
-      break;
-    }
-    hasrecvd += n;
-
-    while(hasrecvd >= FRAME_HEADER_SIZE){
-      int command = 0;
-      int length = 0;
-      decode_header(buf, &command, &length);
-      int frame_size = FRAME_HEADER_SIZE + length;
-      if(hasrecvd < frame_size){
-        break; // wait for the rest of this frame
-      }
-
-      if(verbose){
-        char* hexbuf = convert_buffer_to_base64(buf, frame_size);
-        printf("length = %d, recvd buf = %s\n", length, hexbuf);
-        delete[] hexbuf;
-      }
-
-      dispatch(deserialize(buf), client_socket);
-      hasrecvd -= frame_size;
-      memmove(buf, buf + frame_size, hasrecvd);
-    }
-  }
-  close_client_socket(client_socket);
-}
-
-void transport::serialize(int client_socket, int command, int length, const char* buf){
-  if(length < 0 || length > MAX_PAYLOAD){
-    printf("Message too long (%d bytes), not sent\n", length);
+void transport::send_line(int client_socket, const std::string& line){
+  if(client_socket < 0){
     return;
   }
-  char packet[FRAME_HEADER_SIZE + MAX_PAYLOAD];
-  uint32_t header = ((uint32_t)(command & 0xFF) << 24) | ((uint32_t)length << 16);
-  uint32_t n_header = htonl(header);
-  memcpy(packet, &n_header, 4);
-  if(length > 0){
-    memcpy(packet + 4, buf, length);
-  }
-  if(send_msg(client_socket, packet, length + 4) == -1){
-    printf("Error sending\n");
-  }
-}
-
-message_content* transport::deserialize(const char* buffer){
-  int command = 0;
-  int length = 0;
-  decode_header(buffer, &command, &length);
-
-  message_content* packet = new message_content();
-  packet->set_command(command);
-
-  // Even commands carry text/bytes, odd commands carry an optional int.
-  if(command % 2 == 0){
-    packet->set_charmessage((char*)buffer + 4, length);
-  }
-  else if(length >= 4){
-    uint32_t value;
-    memcpy(&value, buffer + 4, 4);
-    packet->set_intmessage((int)ntohl(value));
-  }
-  return packet;
-}
-
-int transport::send_msg(int client_socket, char* message, int length){
   if(verbose){
-    char* hexbuf = convert_buffer_to_base64(message, length);
-    printf("Sending... Socket = %d, length = %d, message = %s\n", client_socket, length, hexbuf);
-    delete[] hexbuf;
+    printf("-> %d: %s\n", client_socket, line.c_str());
   }
-
-  if(send(client_socket, message, length, 0) == -1){
-    return -1;
+  std::string data = line + "\n";
+  size_t sent = 0;
+  // send() may write only part of the buffer; keep going until it is all out.
+  while(sent < data.size()){
+    ssize_t n = send(client_socket, data.data() + sent, data.size() - sent, 0);
+    if(n <= 0){
+      printf("Send to client %d failed\n", client_socket);
+      return;
+    }
+    sent += n;
   }
-  return 1;
-}
-
-// Despite the name this is a hex dump, used for debug logging.
-char* transport::convert_buffer_to_base64(const char* message, int length){
-  static const char digits[] = "0123456789ABCDEF";
-  char* msg = new char[2*length + 1];
-  for(int i = 0; i < length; i++){
-    unsigned char byte = message[i];
-    msg[2*i] = digits[byte >> 4];
-    msg[2*i+1] = digits[byte & 0x0F];
-  }
-  msg[2*length] = 0;
-  return msg;
 }
