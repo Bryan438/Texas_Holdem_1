@@ -14,19 +14,21 @@
 ---
 
 ## Project Goal
-A lightweight, headless Texas Hold’em engine that **accepts socket connections from multiple CLI/GUI clients**, enforces game flow, and broadcasts game-state deltas.
+A lightweight, headless Texas Hold’em engine that **accepts socket connections from multiple CLI/GUI clients**, enforces game flow, and sends every player the full game state after each change.
 
 ---
 
 ## Architecture Overview
 ```mermaid
 flowchart TD
-  A[CLI / GUI clients] -- JSON/TCP --> B(Table Server)
-  B -- "observer pattern" --> C[Controller]
-  C --> D[Table]
-  D --> E[Player<br/>objects]
-  D --> F[DeckOfCard]
-  C --> G["Transport<br/>send/recv"]
+  A["Clients (TH_Client)"] -- "JSON lines over TCP" --> B["transport<br/>one read thread per client"]
+  B -- "on_message / on_disconnect<br/>one at a time, under a mutex" --> C["table<br/>game state machine"]
+  C -- "state / event / error<br/>via sender interface" --> B
+  C --> D["hand_evaluator<br/>best 5 of 7"]
+  C --> E["pot_calculator<br/>main and side pots"]
+  C --> F["deck_of_card"]
+  G["main (controller.cpp)<br/>calls tick() every 500 ms"] -- "turn timer" --> C
+```
 
 ---
 
