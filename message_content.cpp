@@ -3,23 +3,22 @@
 #include <stdlib.h>
 
 message_content::message_content(){
+  length = 0;
   charmessage = NULL;
+  intmessage = 0;
+  command = 0;
 }
 
 message_content::~message_content(){
-  if(charmessage != NULL){
-    delete charmessage;
-  }
+  delete[] charmessage;
 }
 
 void message_content::set_charmessage(char* msg, int len){
-  if(charmessage != NULL){
-    delete charmessage;
-  }
+  delete[] charmessage;
   length = len;
-  charmessage = new char[length+1];
+  charmessage = new char[length + 1];
   memcpy(charmessage, msg, len);
-  charmessage[len+1] = 0;
+  charmessage[len] = 0;
 }
 
 void message_content::set_intmessage(int msg){

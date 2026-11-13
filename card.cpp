@@ -7,7 +7,7 @@ Card::Card(card_suit s, int n){
   number = n;
 }
 
-void Card::show(){
+void Card::show() const{
   const char* str_suit = NULL;
   switch(suit){
     case Diamond:
@@ -33,10 +33,10 @@ void Card::set_number(int n){
   number = n;
 }
 
-card_suit Card::get_suit(){
+card_suit Card::get_suit() const{
   return suit;
 }
 
-int Card::get_number(){
+int Card::get_number() const{
   return number;
 }

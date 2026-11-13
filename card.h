@@ -14,10 +14,10 @@ class Card{
  public:
     Card(card_suit suit, int number);
     Card(){};
-    void show();
+    void show() const;
     void set_number(int number);
-    card_suit get_suit();
-    int get_number();
+    card_suit get_suit() const;
+    int get_number() const;
 };
 
 #endif

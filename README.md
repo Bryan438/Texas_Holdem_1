@@ -27,3 +27,16 @@ flowchart TD
   D --> E[Player<br/>objects]
   D --> F[DeckOfCard]
   C --> G["Transport<br/>send/recv"]
+
+---
+
+## Build & Test
+```bash
+make            # builds ./thserver (listens on port 4000)
+make test       # builds and runs tests/run_tests with AddressSanitizer + UBSan
+```
+Tests have no external dependencies (`tests/test_framework.h`). They cover:
+- hand ranking (`hand_evaluator.cpp`): every category, kickers, wheel straight, best 5 of 7
+- pot splitting (`pot_calculator.cpp`): main pot, multiple side pots, uncalled bets, odd chips
+- wire protocol (`transport.cpp`): framing across split / merged TCP reads
+- full hands driven through `table::handle_message`: folds, check-downs, all-ins, button rotation

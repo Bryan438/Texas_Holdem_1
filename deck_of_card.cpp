@@ -1,5 +1,7 @@
 #include <iostream>
 #include <string.h>
+#include <algorithm>
+#include <random>
 #include "card.h"
 #include "deck_of_card.h"
 
@@ -25,26 +27,10 @@ deck_of_card::deck_of_card(){
 }
 
 void deck_of_card::shuffle(){
-  Card* shuffled_card[52];
-  int count = -1;
-  int sec_count = -1;
-  srand(time(NULL));
-  for(int i = 0; i < 52; i++){
-    int random_card_num = rand() % (52 - i);
-    while(count != random_card_num){
-      sec_count++;
-      if(cards[sec_count] != NULL){
-        count++;
-      }
-    }
-    shuffled_card[i] = cards[sec_count];
-    cards[sec_count] = NULL;
-    count = -1;
-    sec_count = -1;
-  }
-  for(int i = 0; i < 52; i++){
-   cards[i] = shuffled_card[i];
-  }
+  // Seeded once from the OS; reseeding with time(NULL) on every shuffle gave
+  // two hands started within the same second the exact same deck.
+  static std::mt19937 rng(std::random_device{}());
+  std::shuffle(cards, cards + 52, rng);
 }
 
 deck_of_card::~deck_of_card(){
