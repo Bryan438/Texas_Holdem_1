@@ -25,6 +25,7 @@ struct table_config{
                              // N = start the next hand by itself after N seconds
   bool log_events = true;  // print events on the server console
   std::string history_path; // append every finished hand here as one JSON line ("" = off)
+  unsigned seed = 0;       // 0 = shuffle at random; N = the same decks every run (bot matches, tests)
 };
 
 enum stage{

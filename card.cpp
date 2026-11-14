@@ -70,3 +70,24 @@ std::string Card::text() const{
     default: return rank + "?";
   }
 }
+
+bool card_from_code(const std::string& code, Card& out){
+  if(code.size() != 2){
+    return false;
+  }
+  static const std::string ranks = "23456789TJQKA";
+  size_t r = ranks.find(code[0]);
+  if(r == std::string::npos){
+    return false;
+  }
+  card_suit suit;
+  switch(code[1]){
+    case 's': suit = Spade; break;
+    case 'h': suit = Heart; break;
+    case 'd': suit = Diamond; break;
+    case 'c': suit = Club; break;
+    default: return false;
+  }
+  out = Card(suit, (int)r + 2);
+  return true;
+}

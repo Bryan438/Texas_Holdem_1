@@ -24,6 +24,7 @@ A lightweight, headless Texas Hold’em engine that **accepts socket connections
 ```mermaid
 flowchart TD
   A["Clients (TH_Client)"] -- "JSON lines over TCP" --> B["transport<br/>one read thread per client"]
+  H["Bots (thbot, bot.cpp)"] -- "same protocol" --> B
   B -- "on_message / on_disconnect<br/>one at a time, under a mutex" --> C["table<br/>game state machine"]
   C -- "state / event / error<br/>via sender interface" --> B
   C --> D["hand_evaluator<br/>best 5 of 7"]
@@ -36,7 +37,7 @@ flowchart TD
 
 ## Build & Run
 ```bash
-make                      # builds ./thserver and ./thstats
+make                      # builds ./thserver, ./thstats, ./thbot and ./thmatch
 ./thserver                # port 4000, 5 min per turn, 200 chips, blinds 1/2; type s to start each hand
 ./thserver --port 4000 --turn 60 --chips 500 --next-hand 10
 ./thserver --turn 0       # no time limit
@@ -98,6 +99,47 @@ Alice                 2      -11    50%     0%    50%        0/1        3
 VPIP: put money in preflop by choice (blinds don't count). PFR: raised preflop.
 `thstats` also checks that every hand adds up (chips in = pot = chips out) and warns if not.
 
+## Bots
+A bot is a normal player: `thbot` connects over TCP, joins with a name and plays with the
+same JSON messages as the client. It decides only from the `state` it is sent, so it sees
+what a person in its seat would see, no more. The server does not need to know about bots.
+
+```bash
+./thbot                                   # one bot named Robo joins 127.0.0.1:4000
+./thbot 192.168.1.20 4000 --bots 3        # Robo1, Robo2, Robo3
+./thbot --name Station --style calling --delay 0.5
+./thbot --bots 3 --start                  # bots-only table: a bot starts each hand
+```
+By default a bot never starts a hand, so a person still types `s`. With `--start`, the
+first bot starts the next hand a few seconds after the last one ends.
+
+Styles (`bot.cpp`):
+- `random` - any legal move; a baseline
+- `calling` - always checks or calls, never folds or raises (a "calling station")
+- `rules` - preflop: the [Chen formula](https://en.wikipedia.org/wiki/Texas_hold_%27em_starting_hands)
+  scores the two hole cards; strong hands raise, middling ones call small raises, the rest fold.
+  After the flop: reads its hand (set or better, top pair / overpair, a weaker pair, a flush
+  or straight draw with its outs, or nothing). It bets strong hands, calls when the pot odds
+  are good enough (rule of 4 and 2 for draws), semi-bluffs some draws, bluffs a little
+  heads-up, and folds the rest.
+
+### How strong is each bot?
+`thmatch` seats bots on a real table in one process (no network) and plays many hands.
+Every bot starts every hand at 100 big blinds, so nobody busts and each hand counts the same.
+The same `--seed` gives the same cards and the same result.
+
+```bash
+./thmatch --hands 10000 rules calling
+./thmatch --hands 5000 rules rules calling random --history bots.jsonl   # then ./thstats bots.jsonl
+```
+Heads-up, 10,000 hands each (big blinds won per 100 hands, 95% confidence interval):
+
+| Match | Winner | bb/100 |
+|---|---|---|
+| rules vs calling | rules | +105.7 ± 10.4 |
+| rules vs random | rules | +85.3 ± 19.9 |
+| calling vs random | too close to tell | 7.0 ± 62.7 |
+
 ## Test
 ```bash
 make test       # builds and runs tests/run_tests with AddressSanitizer + UBSan
@@ -114,5 +156,9 @@ Tests have no external dependencies (`tests/test_framework.h`). They cover:
   late joiners, busted players
 - hand history: what is recorded, what each player is sent, the history file, stats, and
   40 hands of random folds / calls / raises / all-ins that must all add up
+- bots: card codes, Chen scores, hand reading (made hands, draws and outs), the moves the
+  rules bot picks in set spots, raises kept inside the allowed range, whole matches where every
+  move must be legal and every hand add up, same seed same result, and the rules bot beating
+  both baselines
 
 JSON: [nlohmann/json](https://github.com/nlohmann/json) v3.11.3, vendored in `third_party/` (MIT).
