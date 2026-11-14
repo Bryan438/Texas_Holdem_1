@@ -35,7 +35,7 @@ flowchart TD
 ## Build & Run
 ```bash
 make                      # builds ./thserver
-./thserver                # port 4000, 30 s per turn, 200 starting chips, blinds 1/2
+./thserver                # port 4000, 300 s (5 min) per turn, 200 starting chips, blinds 1/2
 ./thserver 4000 20 500    # port, seconds per turn (0 = no limit), starting chips
 TH_VERBOSE=1 ./thserver   # also print every message sent and received
 ```
