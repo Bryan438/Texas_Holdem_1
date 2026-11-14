@@ -36,11 +36,13 @@ flowchart TD
 
 ## Build & Run
 ```bash
-make                      # builds ./thserver
+make                      # builds ./thserver and ./thstats
 ./thserver                # port 4000, 5 min per turn, 200 chips, blinds 1/2; type s to start each hand
 ./thserver --port 4000 --turn 60 --chips 500 --next-hand 10
 ./thserver --turn 0       # no time limit
 ./thserver --next-hand 10 # optional: start the next hand by itself 10 s after the last one
+./thserver --history game.jsonl     # save hands to game.jsonl (default hands.jsonl)
+./thserver --no-history   # do not save hands
 ./thserver --verbose      # also print every message sent and received
 ./thserver --help
 ```
@@ -68,6 +70,8 @@ Server -> client
   the allowed actions with the raise range
 - `event` - a line for the game log ("Bob raises to 20", "Flop: Q♥ 8♥ 4♠")
 - `error` - why a message was rejected
+- `hand_summary` - the hand that just ended: actions by street, board, showdown, winners;
+  hole cards only for yourself and for hands shown at showdown
 
 Rules handled by the server: turn order, check/call/raise options, minimum raise (a short
 all-in does not reopen betting), side pots, heads-up blinds, button rotation. A player who
@@ -75,6 +79,24 @@ runs out of time checks if possible, otherwise folds. A player who disconnects f
 current hand and gets their seat and chips back by joining again with the same name and
 their token; without the token nobody else can take that seat. Each hand starts when a player
 sends `start`; with `--next-hand N` the next one starts by itself after N seconds instead.
+
+## Hand history and stats
+Every finished hand is appended to `hands.jsonl`, one JSON object per line: start stacks,
+every player's hole cards, blinds and actions with the street and chips put in (plus
+`reason` for timeouts and disconnects), board, showdown, winners, and each player's net.
+**The file contains everyone's cards**: it stays on the server and is never sent to players.
+
+```bash
+./thstats                 # reads hands.jsonl
+./thstats game.jsonl
+```
+```
+Player            Hands      Net   VPIP    PFR    Won  Showdowns     Best
+Bob                   2      +11     0%     0%    50%        1/1       24
+Alice                 2      -11    50%     0%    50%        0/1        3
+```
+VPIP: put money in preflop by choice (blinds don't count). PFR: raised preflop.
+`thstats` also checks that every hand adds up (chips in = pot = chips out) and warns if not.
 
 ## Test
 ```bash
@@ -90,5 +112,7 @@ Tests have no external dependencies (`tests/test_framework.h`). They cover:
   player after every action, private hole cards, minimum raises, all-ins, turn timer,
   disconnect and reconnect (with and without the token), the next-hand countdown,
   late joiners, busted players
+- hand history: what is recorded, what each player is sent, the history file, stats, and
+  40 hands of random folds / calls / raises / all-ins that must all add up
 
 JSON: [nlohmann/json](https://github.com/nlohmann/json) v3.11.3, vendored in `third_party/` (MIT).

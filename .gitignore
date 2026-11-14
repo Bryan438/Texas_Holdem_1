@@ -2,3 +2,5 @@ thserver
 *.o
 tests/run_tests
 *.dSYM/
+hands.jsonl
+thstats
