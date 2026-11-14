@@ -21,7 +21,8 @@ struct table_config{
   int small_blind = 1;
   int big_blind = 2;
   int turn_seconds = 300;  // 5 minutes; 0 = no time limit
-  int next_hand_seconds = 5; // start the next hand automatically; 0 = wait for "start"
+  int next_hand_seconds = 0; // 0 = a player starts each hand with "start";
+                             // N = start the next hand by itself after N seconds
   bool log_events = true;  // print events on the server console
 };
 

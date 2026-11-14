@@ -37,9 +37,10 @@ flowchart TD
 ## Build & Run
 ```bash
 make                      # builds ./thserver
-./thserver                # port 4000, 5 min per turn, 200 chips, blinds 1/2, next hand after 5 s
+./thserver                # port 4000, 5 min per turn, 200 chips, blinds 1/2; type s to start each hand
 ./thserver --port 4000 --turn 60 --chips 500 --next-hand 10
-./thserver --turn 0 --next-hand 0   # no time limit, start every hand by typing s
+./thserver --turn 0       # no time limit
+./thserver --next-hand 10 # optional: start the next hand by itself 10 s after the last one
 ./thserver --verbose      # also print every message sent and received
 ./thserver --help
 ```
@@ -72,8 +73,8 @@ Rules handled by the server: turn order, check/call/raise options, minimum raise
 all-in does not reopen betting), side pots, heads-up blinds, button rotation. A player who
 runs out of time checks if possible, otherwise folds. A player who disconnects folds the
 current hand and gets their seat and chips back by joining again with the same name and
-their token; without the token nobody else can take that seat. After a hand, the next one
-starts by itself after a short countdown (or right away when someone sends `start`).
+their token; without the token nobody else can take that seat. Each hand starts when a player
+sends `start`; with `--next-hand N` the next one starts by itself after N seconds instead.
 
 ## Test
 ```bash
