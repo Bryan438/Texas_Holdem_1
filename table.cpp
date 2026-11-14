@@ -1,10 +1,13 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
+#include <ctime>
+#include <fstream>
 #include <random>
 #include "table.h"
 #include "hand_evaluator.h"
 #include "pot_calculator.h"
+#include <numeric>
 
 static int64_t steady_ms(){
   using namespace std::chrono;
@@ -20,6 +23,15 @@ static std::string make_token(){
     token += digits[rd() % 16];
   }
   return token;
+}
+
+static std::string utc_now(){
+  std::time_t t = std::time(nullptr);
+  std::tm tm;
+  gmtime_r(&t, &tm);
+  char buf[32];
+  std::strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%SZ", &tm);
+  return buf;
 }
 
 static const char* stage_name(stage s){
@@ -85,6 +97,7 @@ void table::on_disconnect(int client){
 
   if(current_stage != WAITING && p.in_hand){
     fold_seat(s);
+    record_action(s, "fold", 0, 0, "disconnected");
     event(p.name + " folds (disconnected)");
     if(turn == s || count_in_hand() <= 1){
       continue_hand(s);
@@ -217,7 +230,7 @@ void table::tick(){
   player& p = *seats[s];
   event(p.name + " ran out of time");
   std::string error;
-  apply_action(s, to_call(p) == 0 ? "check" : "fold", 0, error);
+  apply_action(s, to_call(p) == 0 ? "check" : "fold", 0, error, "timeout");
   continue_hand(s);
 }
 
@@ -262,8 +275,22 @@ bool table::start_hand(){
   }
 
   current_stage = PREFLOP;
+  record = {{"hand", hand_count}, {"started_at", utc_now()},
+            {"blinds", {config.small_blind, config.big_blind}},
+            {"dealer", dealer}, {"small_blind", small_blind_seat}, {"big_blind", big_blind_seat},
+            {"players", json::array()}, {"actions", json::array()}};
+  for(size_t i = 0; i < seats.size(); i++){
+    const player& p = *seats[i];
+    if(p.dealt){
+      record["players"].push_back({{"seat", (int)i}, {"name", p.name}, {"stack", p.stack},
+                                   {"cards", {p.cards[0]->code(), p.cards[1]->code()}}});
+    }
+  }
+
   int sb = seats[small_blind_seat]->put_in(config.small_blind);
   int bb = seats[big_blind_seat]->put_in(config.big_blind);
+  record_action(small_blind_seat, "small_blind", sb, 0, "");
+  record_action(big_blind_seat, "big_blind", bb, 0, "");
   current_bet = config.big_blind;
   last_raise_size = config.big_blind;
 
@@ -275,12 +302,14 @@ bool table::start_hand(){
   return true;
 }
 
-bool table::apply_action(int s, const std::string& action, int amount, std::string& error){
+bool table::apply_action(int s, const std::string& action, int amount, std::string& error,
+                         const std::string& reason){
   player& p = *seats[s];
   int call_amount = to_call(p);
 
   if(action == "fold"){
     fold_seat(s);
+    record_action(s, "fold", 0, 0, reason);
     event(p.name + " folds");
     return true;
   }
@@ -290,6 +319,7 @@ bool table::apply_action(int s, const std::string& action, int amount, std::stri
       return false;
     }
     p.acted = true;
+    record_action(s, "check", 0, 0, reason);
     event(p.name + " checks");
     return true;
   }
@@ -300,6 +330,7 @@ bool table::apply_action(int s, const std::string& action, int amount, std::stri
     }
     int put = p.put_in(call_amount);
     p.acted = true;
+    record_action(s, "call", put, 0, reason);
     event(p.name + " calls " + std::to_string(put) + (p.all_in ? " and is all-in" : ""));
     return true;
   }
@@ -316,8 +347,9 @@ bool table::apply_action(int s, const std::string& action, int amount, std::stri
     }
     bool was_bet = current_bet == 0;
     int raise_size = amount - current_bet;
-    p.put_in(amount - p.round_bet);
+    int put = p.put_in(amount - p.round_bet);
     p.acted = true;
+    record_action(s, was_bet ? "bet" : "raise", put, amount, reason);
     // A full raise reopens the betting for everyone else. A short all-in does
     // not, though players facing it still have to call the difference.
     if(raise_size >= last_raise_size){
@@ -420,6 +452,40 @@ void table::finish_hand(){
     event(seats[i]->name + " wins " + std::to_string(payout[i]) + (hand.empty() ? "" : " with " + hand));
   }
 
+  // Complete the hand record.
+  json board_codes = json::array();
+  for(int i = 0; i < board_count; i++){
+    board_codes.push_back(board[i]->code());
+  }
+  record["board"] = board_codes;
+  record["pot"] = std::accumulate(contributions.begin(), contributions.end(), 0);
+  record["showdown"] = json::array();
+  if(showdown){
+    for(int i = 0; i < n; i++){
+      if(in_hand[i]){
+        record["showdown"].push_back({{"seat", i}, {"name", seats[i]->name},
+                                      {"cards", {seats[i]->cards[0]->code(), seats[i]->cards[1]->code()}},
+                                      {"hand", hand_category_name(hand_category_of(scores[i]))}});
+      }
+    }
+  }
+  record["winners"] = json::array();
+  for(const hand_result_entry& r : last_result){
+    record["winners"].push_back({{"seat", r.seat}, {"name", seats[r.seat]->name}, {"won", r.amount}});
+  }
+  for(json& pl : record["players"]){
+    int seat = pl["seat"].get<int>();
+    pl["end_stack"] = seats[seat]->stack;
+    pl["net"] = seats[seat]->stack - pl["stack"].get<int>();
+  }
+  last_record = record;
+  save_record();
+  for(size_t i = 0; i < seats.size(); i++){
+    if(seats[i]->connected){
+      send(seats[i]->socket, summary_for(i));
+    }
+  }
+
   for(auto& p : seats){
     p->reset_for_round();   // no bets left on the table between hands
   }
@@ -445,6 +511,48 @@ void table::begin_turn(int s){
 void table::fold_seat(int s){
   seats[s]->in_hand = false;
   seats[s]->acted = true;
+}
+
+// ---------------------------------------------------------------- hand history
+
+void table::record_action(int s, const std::string& action, int amount, int to, const std::string& reason){
+  json a = {{"street", stage_name(current_stage)}, {"seat", s}, {"name", seats[s]->name},
+            {"action", action}, {"amount", amount}};
+  if(action == "bet" || action == "raise"){
+    a["to"] = to;
+  }
+  if(seats[s]->all_in && amount > 0){
+    a["allin"] = true;
+  }
+  if(!reason.empty()){
+    a["reason"] = reason;
+  }
+  record["actions"].push_back(a);
+}
+
+void table::save_record(){
+  if(config.history_path.empty()){
+    return;
+  }
+  std::ofstream out(config.history_path, std::ios::app);
+  out << last_record.dump(-1, ' ', false, json::error_handler_t::replace) << "\n";
+  if(!out){
+    printf("Could not write hand history to %s\n", config.history_path.c_str());
+  }
+}
+
+// The finished hand as one player may see it: their own cards, plus the
+// cards that were shown at showdown. Never anyone else's folded cards.
+json table::summary_for(int viewer) const{
+  json summary = last_record;
+  summary["type"] = "hand_summary";
+  summary["you"] = viewer;
+  for(json& pl : summary["players"]){
+    if(pl["seat"].get<int>() != viewer){
+      pl.erase("cards");
+    }
+  }
+  return summary;
 }
 
 // ---------------------------------------------------------------- helpers

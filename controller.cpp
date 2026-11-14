@@ -15,6 +15,9 @@ static void usage(const char* program){
          "  --chips N       starting chips (default 200)\n"
          "  --next-hand N   start the next hand by itself after N seconds\n"
          "                  (default 0: someone types s to start each hand)\n"
+         "  --history FILE  append every finished hand to FILE as JSON lines\n"
+         "                  (default hands.jsonl; it holds every player's cards)\n"
+         "  --no-history    do not save hands\n"
          "  --verbose       print every message sent and received\n"
          "Old style still works: %s [port] [seconds per turn] [starting chips]\n",
          program, program);
@@ -35,6 +38,7 @@ static int number(const char* program, const char* text){
 int main(int argc, char* argv[]){
   int port = 4000;
   table_config config;
+  config.history_path = "hands.jsonl";
   bool verbose = getenv("TH_VERBOSE") != NULL;
 
   int positional = 0;
@@ -56,6 +60,12 @@ int main(int argc, char* argv[]){
     }
     else if(arg == "--chips" && has_value){
       config.starting_stack = number(argv[0], argv[++i]);
+    }
+    else if(arg == "--history" && has_value){
+      config.history_path = argv[++i];
+    }
+    else if(arg == "--no-history"){
+      config.history_path = "";
     }
     else if(arg == "--next-hand" && has_value){
       config.next_hand_seconds = number(argv[0], argv[++i]);
@@ -92,6 +102,10 @@ int main(int argc, char* argv[]){
                        : "a player types s to start each hand";
   printf("Texas Hold'em server: port %d, %s, %d starting chips, blinds %d/%d, %s\n",
          port, turn.c_str(), config.starting_stack, config.small_blind, config.big_blind, next.c_str());
+  if(!config.history_path.empty()){
+    printf("Saving hands to %s (contains every player's cards: keep it to yourself)\n",
+           config.history_path.c_str());
+  }
 
   // Turn time limit and next-hand countdown. Same lock as message handling.
   while(true){

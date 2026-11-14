@@ -24,6 +24,7 @@ struct table_config{
   int next_hand_seconds = 0; // 0 = a player starts each hand with "start";
                              // N = start the next hand by itself after N seconds
   bool log_events = true;  // print events on the server console
+  std::string history_path; // append every finished hand here as one JSON line ("" = off)
 };
 
 enum stage{
@@ -54,6 +55,7 @@ struct hand_result_entry{
 //   {"type":"state", ...}   full table as this player may see it, after every change
 //   {"type":"event","text":"Bob raises to 20"}
 //   {"type":"error","message":"..."}
+//   {"type":"hand_summary", ...}  the hand that just ended, as this player may see it
 class table: public observer{
   public:
     using clock_fn = std::function<int64_t()>;  // milliseconds, monotonic
@@ -82,6 +84,8 @@ class table: public observer{
     int seat_of(int client) const;
     int hand_number() const { return hand_count; }
     int board_size() const { return board_count; }
+    // Full record of the last finished hand, including every hole card.
+    const json& last_hand() const { return last_record; }
 
     // Set a seat's chips between hands (tests; could back an admin command).
     void set_stack(int seat, int chips){ if(current_stage == WAITING) seats[seat]->stack = chips; }
@@ -109,6 +113,8 @@ class table: public observer{
     int last_raise_size = 0;
     bool reveal_cards = false;          // showdown: everyone sees hands still in
     std::vector<hand_result_entry> last_result;
+    json record;                        // the hand being played (see hand history)
+    json last_record;                   // the last finished hand
 
     // Message handlers
     void handle_join(int client, const json& msg);
@@ -117,7 +123,11 @@ class table: public observer{
 
     // Game flow
     bool start_hand();
-    bool apply_action(int seat, const std::string& action, int amount, std::string& error);
+    bool apply_action(int seat, const std::string& action, int amount, std::string& error,
+                      const std::string& reason = "");
+    void record_action(int seat, const std::string& action, int amount, int to, const std::string& reason);
+    void save_record();
+    json summary_for(int viewer) const;
     void continue_hand(int from);
     void deal_next_street();
     void finish_hand();
