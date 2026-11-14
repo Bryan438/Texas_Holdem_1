@@ -45,7 +45,11 @@ static const char* stage_name(stage s){
 }
 
 table::table(sender* o, table_config c, clock_fn clock)
-  : out(o), config(c), now_ms(clock ? clock : steady_ms) {}
+  : out(o), config(c), now_ms(clock ? clock : steady_ms){
+  if(config.seed != 0){
+    deck->seed(config.seed);
+  }
+}
 
 table::~table(){
   delete deck;

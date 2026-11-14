@@ -26,4 +26,7 @@ class Card{
     std::string text() const;
 };
 
+// Parse a code made by Card::code() ("Ad", "Th", "7c"). False if it is not one.
+bool card_from_code(const std::string& code, Card& out);
+
 #endif

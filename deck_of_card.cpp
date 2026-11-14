@@ -5,7 +5,9 @@
 #include "card.h"
 #include "deck_of_card.h"
 
-deck_of_card::deck_of_card(){
+// Seeded from the OS once per deck. (Reseeding with time(NULL) on every
+// shuffle used to give two hands started within the same second the same deck.)
+deck_of_card::deck_of_card() : rng(std::random_device{}()){
   card_suit suit;
   for(int i = 2; i <= 14; i++){
     for(int j = 1; j <= 4; j++){
@@ -27,10 +29,11 @@ deck_of_card::deck_of_card(){
 }
 
 void deck_of_card::shuffle(){
-  // Seeded once from the OS; reseeding with time(NULL) on every shuffle gave
-  // two hands started within the same second the exact same deck.
-  static std::mt19937 rng(std::random_device{}());
   std::shuffle(cards, cards + 52, rng);
+}
+
+void deck_of_card::seed(unsigned value){
+  rng.seed(value);
 }
 
 deck_of_card::~deck_of_card(){

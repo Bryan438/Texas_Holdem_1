@@ -14,7 +14,9 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - name: Build server and stats tool
-        run: make thserver thstats
+      - name: Build server, stats tool and bots
+        run: make
+      - name: Short bot match
+        run: ./thmatch --hands 500 rules calling random
       - name: Run tests (AddressSanitizer + UBSan)
         run: make test
