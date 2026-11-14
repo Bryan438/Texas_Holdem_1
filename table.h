@@ -21,11 +21,13 @@ struct table_config{
   int small_blind = 1;
   int big_blind = 2;
   int turn_seconds = 300;  // 5 minutes; 0 = no time limit
+  int next_hand_seconds = 5; // start the next hand automatically; 0 = wait for "start"
   bool log_events = true;  // print events on the server console
 };
 
 enum stage{
-  WAITING = 0,  // no hand running; any seated player can send "start"
+  WAITING = 0,  // no hand running; any seated player can send "start",
+                // or the next one starts by itself after next_hand_seconds
   PREFLOP,
   FLOP,
   TURN,
@@ -40,12 +42,14 @@ struct hand_result_entry{
 
 // Client -> server messages (one JSON object per line):
 //   {"type":"join","name":"Bryan"}
+//   {"type":"join","name":"Bryan","token":"..."}   reconnect to a seat after a disconnect
 //   {"type":"start"}
 //   {"type":"action","action":"fold|check|call|raise","amount":20}
 //     amount = total bet for this round after the raise ("raise to")
 //
 // Server -> client messages:
-//   {"type":"welcome","seat":0,"name":"Bryan"}
+//   {"type":"welcome","seat":0,"name":"Bryan","token":"..."}
+//     keep the token: it is needed to take the seat back after a disconnect
 //   {"type":"state", ...}   full table as this player may see it, after every change
 //   {"type":"event","text":"Bob raises to 20"}
 //   {"type":"error","message":"..."}
@@ -61,7 +65,8 @@ class table: public observer{
     void on_message(int client, const std::string& line) override;
     void on_disconnect(int client) override;
 
-    // Call regularly (e.g. every 500 ms) to enforce the turn time limit.
+    // Call regularly (e.g. every 500 ms): enforces the turn time limit and
+    // starts the next hand when its countdown runs out.
     void tick();
 
     // Read-only view, used by tests
@@ -98,6 +103,7 @@ class table: public observer{
     int big_blind_seat = -1;
     int turn = -1;
     int64_t turn_deadline = 0;
+    int64_t next_hand_at = 0;           // 0 = no automatic start pending
     int current_bet = 0;
     int last_raise_size = 0;
     bool reveal_cards = false;          // showdown: everyone sees hands still in

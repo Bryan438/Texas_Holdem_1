@@ -9,6 +9,7 @@
 struct player{
   int socket = -1;          // -1 while disconnected
   std::string name;
+  std::string token;        // secret given at join, needed to reconnect
   bool connected = true;
   int stack = 0;            // chips not yet in the pot
 

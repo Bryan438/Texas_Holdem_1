@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
+#include <random>
 #include "table.h"
 #include "hand_evaluator.h"
 #include "pot_calculator.h"
@@ -8,6 +9,17 @@
 static int64_t steady_ms(){
   using namespace std::chrono;
   return duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
+}
+
+// 128 random bits as hex. Proves a reconnecting client is the original player.
+static std::string make_token(){
+  static const char digits[] = "0123456789abcdef";
+  std::random_device rd;
+  std::string token;
+  for(int i = 0; i < 32; i++){
+    token += digits[rd() % 16];
+  }
+  return token;
 }
 
 static const char* stage_name(stage s){
@@ -100,16 +112,23 @@ void table::handle_join(int client, const json& msg){
     return;
   }
 
-  // Same name as a disconnected player: take that seat (and its chips) back.
+  // Same name as a disconnected player: take that seat (and its chips) back,
+  // but only with the token that player was given, so nobody else can.
   for(size_t i = 0; i < seats.size(); i++){
     if(seats[i]->name == name){
       if(seats[i]->connected){
         send_error(client, "name \"" + name + "\" is taken");
         return;
       }
+      std::string token = msg.contains("token") && msg["token"].is_string() ? msg["token"].get<std::string>() : "";
+      if(token != seats[i]->token){
+        send_error(client, "name \"" + name + "\" belongs to a player who disconnected; "
+                           "only their client can take the seat back");
+        return;
+      }
       seats[i]->socket = client;
       seats[i]->connected = true;
-      send(client, {{"type", "welcome"}, {"seat", (int)i}, {"name", name}});
+      send(client, {{"type", "welcome"}, {"seat", (int)i}, {"name", name}, {"token", token}});
       event(name + " reconnected");
       broadcast_state();
       return;
@@ -139,7 +158,8 @@ void table::handle_join(int client, const json& msg){
   p.socket = client;
   p.name = name;
   p.stack = config.starting_stack;
-  send(client, {{"type", "welcome"}, {"seat", s}, {"name", name}});
+  p.token = make_token();
+  send(client, {{"type", "welcome"}, {"seat", s}, {"name", name}, {"token", p.token}});
   event(name + " joined" + (current_stage == WAITING ? "" : " (plays from the next hand)"));
   broadcast_state();
 }
@@ -177,7 +197,17 @@ void table::handle_action(int client, const json& msg){
 }
 
 void table::tick(){
-  if(current_stage == WAITING || turn < 0 || config.turn_seconds <= 0){
+  if(current_stage == WAITING){
+    if(next_hand_at > 0 && now_ms() >= next_hand_at){
+      next_hand_at = 0;
+      if(!start_hand()){
+        event("Not enough players with chips. Waiting for someone to join.");
+        broadcast_state();
+      }
+    }
+    return;
+  }
+  if(turn < 0 || config.turn_seconds <= 0){
     return;
   }
   if(now_ms() < turn_deadline){
@@ -199,6 +229,7 @@ bool table::start_hand(){
   if(ready < 2){
     return false;
   }
+  next_hand_at = 0;
 
   for(auto& p : seats){
     p->reset_for_hand();
@@ -396,7 +427,13 @@ void table::finish_hand(){
   current_stage = WAITING;
   turn = -1;
   current_bet = 0;
-  event("Hand over. Send start for the next hand.");
+  if(config.next_hand_seconds > 0){
+    next_hand_at = now_ms() + config.next_hand_seconds * 1000LL;
+    event("Hand over. Next hand in " + std::to_string(config.next_hand_seconds) + " s.");
+  }
+  else{
+    event("Hand over. Send start for the next hand.");
+  }
   broadcast_state();
 }
 
@@ -478,6 +515,12 @@ json table::state_for(int viewer) const{
   st["big_blind"] = current_stage == WAITING ? -1 : big_blind_seat;
   st["turn"] = turn;
   st["blinds"] = {config.small_blind, config.big_blind};
+  if(current_stage == WAITING && next_hand_at > 0){
+    st["next_hand_in"] = std::max<int64_t>(0, (next_hand_at - now_ms() + 999) / 1000);
+  }
+  else{
+    st["next_hand_in"] = nullptr;
+  }
 
   if(turn >= 0 && config.turn_seconds > 0){
     st["turn_time_left"] = std::max<int64_t>(0, (turn_deadline - now_ms() + 999) / 1000);

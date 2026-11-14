@@ -17,10 +17,11 @@ class fake_sender: public sender{
     }
 };
 
-table_config quiet_config(int turn_seconds = 30){
+table_config quiet_config(int turn_seconds = 30, int next_hand_seconds = 0){
   table_config c;
   c.log_events = false;
   c.turn_seconds = turn_seconds;
+  c.next_hand_seconds = next_hand_seconds;
   return c;
 }
 
@@ -39,10 +40,16 @@ class harness{
 
     static int client(int seat){ return 101 + seat; }
 
-    void join(int c, const std::string& name){
+    void join(int c, const std::string& name, const std::string& token = ""){
       t.on_connect(c);
-      send(c, {{"type", "join"}, {"name", name}});
+      json msg = {{"type", "join"}, {"name", name}};
+      if(!token.empty()){
+        msg["token"] = token;
+      }
+      send(c, msg);
     }
+
+    std::string token_of(int c){ return last(c, "welcome").value("token", ""); }
 
     void send(int c, const json& msg){ t.on_message(c, msg.dump()); }
     void start(){ send(client(0), {{"type", "start"}}); }
@@ -329,8 +336,12 @@ TEST(table_disconnect_on_turn_folds_and_moves_on){
   CHECK(h.got_event(harness::client(2), "P0 disconnected"));
 }
 
-TEST(table_disconnect_and_reconnect_by_name){
+TEST(table_disconnect_and_reconnect_with_token){
   harness h(2);
+  std::string token = h.token_of(harness::client(1));
+  CHECK_EQ(token.size(), 32);
+  CHECK(token != h.token_of(harness::client(0)));
+
   h.start();                                  // seat 0 to act
   h.t.on_disconnect(harness::client(1));      // the other player leaves
   CHECK_EQ(h.t.get_stage(), WAITING);         // seat 0 wins at once
@@ -341,12 +352,74 @@ TEST(table_disconnect_and_reconnect_by_name){
   CHECK_EQ(h.t.get_stage(), WAITING);         // one player is not enough
   CHECK(!h.last(harness::client(0), "error").is_null());
 
-  h.join(500, "P1");                          // comes back on a new connection
+  // Someone else trying the name: without the token, or with a wrong one
+  h.join(400, "P1");
+  CHECK(h.last(400, "welcome").is_null());
+  CHECK(h.last(400, "error")["message"].get<std::string>().find("only their client") != std::string::npos);
+  h.join(401, "P1", "00000000000000000000000000000000");
+  CHECK(h.last(401, "welcome").is_null());
+  CHECK(!h.t.seat(1).connected);
+
+  h.join(500, "P1", token);                   // the real player, new connection
   CHECK_EQ(h.last(500, "welcome")["seat"].get<int>(), 1);
+  CHECK(h.last(500, "welcome")["token"] == token);
   CHECK_EQ(h.t.seat(1).stack, 198);           // chips kept
   CHECK_EQ(h.t.seat_count(), 2);
   h.send(500, {{"type", "start"}});
   CHECK_EQ(h.t.get_stage(), PREFLOP);
+}
+
+TEST(table_next_hand_starts_by_itself){
+  harness h(3, quiet_config(30, 5));
+  h.start();
+  h.act(0, "fold");
+  h.act(1, "fold");
+  CHECK_EQ(h.t.get_stage(), WAITING);
+  CHECK_EQ(h.last(harness::client(0), "state")["next_hand_in"].get<int>(), 5);
+  CHECK(h.got_event(harness::client(0), "Hand over. Next hand in 5 s."));
+
+  h.now += 4999;
+  h.t.tick();
+  CHECK_EQ(h.t.get_stage(), WAITING);
+  h.now += 1;
+  h.t.tick();
+  CHECK_EQ(h.t.get_stage(), PREFLOP);
+  CHECK_EQ(h.t.hand_number(), 2);
+  CHECK_EQ(h.t.get_dealer(), 1);
+  CHECK(h.last(harness::client(0), "state")["next_hand_in"].is_null());
+}
+
+TEST(table_typing_start_skips_the_countdown){
+  harness h(2, quiet_config(30, 5));
+  h.start();
+  h.act(0, "fold");
+  h.start();                                  // during the countdown
+  CHECK_EQ(h.t.hand_number(), 2);
+  h.now += 5000;
+  h.t.tick();                                 // the old countdown must not start a third hand
+  CHECK_EQ(h.t.hand_number(), 2);
+}
+
+TEST(table_countdown_waits_for_enough_players){
+  harness h(2, quiet_config(30, 5));
+  h.start();
+  h.t.on_disconnect(harness::client(1));      // hand ends, only one player left
+  CHECK_EQ(h.t.get_stage(), WAITING);
+  h.now += 5000;
+  h.t.tick();
+  CHECK_EQ(h.t.get_stage(), WAITING);
+  CHECK(h.got_event(harness::client(0), "Not enough players with chips. Waiting for someone to join."));
+  CHECK(h.last(harness::client(0), "state")["next_hand_in"].is_null());
+}
+
+TEST(table_no_countdown_when_disabled){
+  harness h(2);                               // next_hand_seconds = 0
+  h.start();
+  h.act(0, "fold");
+  CHECK(h.last(harness::client(0), "state")["next_hand_in"].is_null());
+  h.now += 60000;
+  h.t.tick();
+  CHECK_EQ(h.t.get_stage(), WAITING);
 }
 
 TEST(table_late_joiner_sits_out){
