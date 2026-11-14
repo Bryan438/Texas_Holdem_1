@@ -15,6 +15,8 @@ enum class bot_style{
   RANDOM,   // any legal move: a baseline every other bot should beat
   CALLING,  // checks or calls, never folds or raises: a "calling station"
   RULES,    // starting-hand score preflop; made hand, draws and pot odds after
+  EQUITY,   // simulates the rest of the hand to estimate its chance of winning,
+            // then compares that with the price of calling
 };
 
 bool parse_bot_style(const std::string& name, bot_style& out);

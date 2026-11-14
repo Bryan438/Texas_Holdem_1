@@ -108,6 +108,7 @@ what a person in its seat would see, no more. The server does not need to know a
 ./thbot                                   # one bot named Robo joins 127.0.0.1:4000
 ./thbot 192.168.1.20 4000 --bots 3        # Robo1, Robo2, Robo3
 ./thbot --name Station --style calling --delay 0.5
+./thbot --style rules                     # default style: equity (the strongest)
 ./thbot --bots 3 --start                  # bots-only table: a bot starts each hand
 ```
 By default a bot never starts a hand, so a person still types `s`. With `--start`, the
@@ -122,6 +123,19 @@ Styles (`bot.cpp`):
   or straight draw with its outs, or nothing). It bets strong hands, calls when the pot odds
   are good enough (rule of 4 and 2 for draws), semi-bluffs some draws, bluffs a little
   heads-up, and folds the rest.
+- `equity` - estimates its chance of winning (its *equity*) by Monte Carlo simulation
+  (`equity.cpp`): deal the unseen cards at random 1,000 times and count how often it wins,
+  splitting ties. It compares that with the price of calling (call / (pot + call)), and bets
+  or raises when it is well ahead of an average hand. Preflop equities are worked out once
+  per kind of hand (AKs, 72o, ...) and number of opponents, then looked up.
+  - **Opponent ranges.** Assuming opponents hold random cards made it call far too often:
+    people rarely bet with nothing. When facing a bet after the flop, it only deals opponents
+    hands that connect with the board (a pair or better using a hole card, or a flush draw),
+    and for bets of half the pot or more, only top pair or better, or a flush draw. This
+    took it from losing to `rules` (-26 ± 24 bb/100) to beating it.
+  - **Speed.** Simulations score millions of hands, so `evaluate_fast` scores 7 cards in one
+    pass (rank counts and suit bit masks) instead of trying all 21 five-card hands. It is 13x
+    faster and the tests check it gives the same score as `evaluate_best`.
 
 ### How strong is each bot?
 `thmatch` seats bots on a real table in one process (no network) and plays many hands.
@@ -132,13 +146,21 @@ The same `--seed` gives the same cards and the same result.
 ./thmatch --hands 10000 rules calling
 ./thmatch --hands 5000 rules rules calling random --history bots.jsonl   # then ./thstats bots.jsonl
 ```
-Heads-up, 10,000 hands each (big blinds won per 100 hands, 95% confidence interval):
+Heads-up (big blinds won per 100 hands, 95% confidence interval):
 
-| Match | Winner | bb/100 |
-|---|---|---|
-| rules vs calling | rules | +105.7 ± 10.4 |
-| rules vs random | rules | +85.3 ± 19.9 |
-| calling vs random | too close to tell | 7.0 ± 62.7 |
+| Match | Hands | Winner | bb/100 |
+|---|---|---|---|
+| equity vs rules | 20,000 | equity | +9.4 ± 7.1 (seeds 2 and 3: +8.5 ± 7.6, +14.8 ± 7.6) |
+| equity vs calling | 10,000 | equity | +235.9 ± 17.2 |
+| equity vs random | 10,000 | equity | +156.2 ± 26.9 |
+| rules vs calling | 10,000 | rules | +105.7 ± 10.4 |
+| rules vs random | 10,000 | rules | +85.3 ± 19.9 |
+| calling vs random | 10,000 | too close to tell | 7.0 ± 62.7 |
+
+Six players, 10,000 hands: the two `equity` bots won +591 and +563 bb/100, the two `rules`
+bots +336 and +263; `random` lost 489 and `calling` 1264. Against `rules` the margin is small:
+both play tight and both mostly bet good hands, so the next step would be bots that adapt to
+how each opponent plays (or learn it, see the hand history).
 
 ## Test
 ```bash
@@ -157,8 +179,11 @@ Tests have no external dependencies (`tests/test_framework.h`). They cover:
 - hand history: what is recorded, what each player is sent, the history file, stats, and
   40 hands of random folds / calls / raises / all-ins that must all add up
 - bots: card codes, Chen scores, hand reading (made hands, draws and outs), the moves the
-  rules bot picks in set spots, raises kept inside the allowed range, whole matches where every
-  move must be legal and every hand add up, same seed same result, and the rules bot beating
-  both baselines
+  rules and equity bots pick in set spots, raises kept inside the allowed range, whole matches
+  where every move must be legal and every hand add up, same seed same result, and both bots
+  beating the baselines
+- equity: known all-in odds (AA 85%, 72o 35%), split pots and kickers, the nuts, opponent
+  ranges, the preflop table, and `evaluate_fast` agreeing with `evaluate_best` on 100,000
+  random hands
 
 JSON: [nlohmann/json](https://github.com/nlohmann/json) v3.11.3, vendored in `third_party/` (MIT).

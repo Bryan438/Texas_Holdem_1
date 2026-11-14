@@ -1,3 +1,4 @@
+#include <random>
 #include <string>
 #include <vector>
 #include "test_framework.h"
@@ -128,5 +129,44 @@ TEST(deck_has_52_unique_cards_after_shuffle){
       }
     }
     CHECK_EQ(unique, 52);
+  }
+}
+
+// The fast evaluator the bots use must score every hand exactly like the
+// brute-force one: compare them on many random 5, 6 and 7 card hands.
+TEST(evaluate_fast_matches_evaluate_best){
+  std::vector<Card> deck;
+  for(card_suit suit : {Diamond, Spade, Heart, Club}){
+    for(int rank = 2; rank <= 14; rank++) deck.push_back(Card(suit, rank));
+  }
+  std::mt19937 rng(2024);
+  int mismatches = 0;
+  int seen[10] = {0};
+  for(int t = 0; t < 100000; t++){
+    int n = 5 + t % 3;
+    for(int i = 0; i < n; i++){
+      std::uniform_int_distribution<int> pick(i, 51);
+      std::swap(deck[i], deck[pick(rng)]);
+    }
+    const Card* cards[7];
+    for(int i = 0; i < n; i++) cards[i] = &deck[i];
+    int best = evaluate_best(cards, n);
+    mismatches += evaluate_fast(cards, n) != best;
+    seen[hand_category_of(best)]++;
+  }
+  CHECK_EQ(mismatches, 0);
+  for(int category = HIGH_CARD; category <= STRAIGHT_FLUSH; category++){
+    CHECK(seen[category] > 0);      // every kind of hand was compared
+  }
+  // Hands random deals rarely produce.
+  auto fast = [](const std::string& text){
+    std::vector<Card> cards = parse(text);
+    std::vector<const Card*> ptrs;
+    for(const Card& c : cards) ptrs.push_back(&c);
+    return evaluate_fast(ptrs.data(), ptrs.size());
+  };
+  for(const char* hand : {"As Ks Qs Js 10s 2d 3c", "5h 4h 3h 2h Ah Kh 9c", "Kd Kc Ks 9h 9d 9c 2s",
+                          "7c 7d 7h 7s Ah Kh Qh", "9h 9d 8c 8s 2h 2d Ac", "Ah 2d 3c 4s 5h 9d 9c"}){
+    CHECK_EQ(fast(hand), score(hand));
   }
 }

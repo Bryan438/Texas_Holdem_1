@@ -22,7 +22,7 @@ struct bot_config{
   std::string host = "127.0.0.1";
   int port = 4000;
   std::string name = "Robo";
-  bot_style style = bot_style::RULES;
+  bot_style style = bot_style::EQUITY;
   double delay = 1.5;      // seconds to "think" before each move
   bool starts_hands = false;
   unsigned seed = 0;       // 0 = random
@@ -241,7 +241,7 @@ static void usage(const char* program){
   printf("Usage: %s [host] [port] [options]\n"
          "Joins a server as a player and plays by itself.\n\n"
          "  --name NAME    player name (default Robo; with --bots N: Robo1, Robo2, ...)\n"
-         "  --style STYLE  %s (default rules)\n"
+         "  --style STYLE  %s (default equity)\n"
          "  --bots N       run N bots at once (default 1)\n"
          "  --delay S      seconds to think before each move (default 1.5)\n"
          "  --start        start each hand when 2+ players are ready, like typing s\n"

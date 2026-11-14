@@ -2,12 +2,14 @@
 #include <cmath>
 #include <set>
 #include "bot.h"
+#include "equity.h"
 #include "hand_evaluator.h"
 
 bool parse_bot_style(const std::string& name, bot_style& out){
   if(name == "random") out = bot_style::RANDOM;
   else if(name == "calling") out = bot_style::CALLING;
   else if(name == "rules") out = bot_style::RULES;
+  else if(name == "equity") out = bot_style::EQUITY;
   else return false;
   return true;
 }
@@ -17,12 +19,13 @@ const char* bot_style_name(bot_style style){
     case bot_style::RANDOM: return "random";
     case bot_style::CALLING: return "calling";
     case bot_style::RULES: return "rules";
+    case bot_style::EQUITY: return "equity";
   }
   return "?";
 }
 
 const char* bot_style_list(){
-  return "random, calling, rules";
+  return "random, calling, rules, equity";
 }
 
 json bot_move::to_message() const{
@@ -331,6 +334,46 @@ bot_move decide_postflop(const view& v, std::mt19937& rng){
   return check_or_fold(v);
 }
 
+bot_move decide_equity(const view& v, std::mt19937& rng){
+  int opponents = std::max(1, v.opponents);
+  // Facing a bet after the flop, assume the bettor holds something, and
+  // something good when the bet is half the pot or more.
+  opponent_range range = opponent_range::ANY;
+  if(!v.board.empty() && v.to_call > 0){
+    int pot_before = std::max(1, v.pot - v.to_call);
+    range = 2 * v.to_call >= pot_before ? opponent_range::STRONG : opponent_range::CONNECTED;
+  }
+  double equity = v.board.empty() ? preflop_equity(v.hole[0], v.hole[1], opponents)
+                                  : estimate_equity(v.hole, v.board, opponents, 1000, rng, range);
+  // With n opponents an average hand wins 1 / (n + 1) of the time; edge says
+  // how much better than average this hand is.
+  double edge = equity * (opponents + 1);
+  double price = v.to_call == 0 ? 0 : (double)v.to_call / (v.pot + v.to_call);
+  int bb = v.big_blind;
+
+  if(v.board.empty()){
+    if(v.current_bet <= bb){
+      if(edge >= 1.3) return raise_to(v, 3 * bb);
+      if(edge >= 0.9) return check_or_call(v);
+      return check_or_fold(v);
+    }
+    if(edge >= 1.5) return raise_to(v, 3 * v.current_bet);
+    if(edge >= 1.15 && equity >= price && v.current_bet <= 5 * bb) return check_or_call(v);
+    if(edge >= 1.3 && equity >= price) return check_or_call(v);
+    return check_or_fold(v);
+  }
+
+  if(v.to_call == 0){
+    if(edge >= 1.6) return bet(v, v.pot * 3 / 4);
+    if(edge >= 1.2) return bet(v, v.pot / 2);
+    if(opponents == 1 && chance(rng, 10)) return bet(v, v.pot / 2);   // bluff
+    return check_or_call(v);
+  }
+  if(edge >= 1.7) return raise_to(v, 3 * v.current_bet);
+  if(equity >= price) return check_or_call(v);
+  return fold();
+}
+
 }  // namespace
 
 bot_move decide(const json& state, bot_style style, std::mt19937& rng){
@@ -347,6 +390,9 @@ bot_move decide(const json& state, bot_style style, std::mt19937& rng){
       if(v.hole.size() != 2) return check_or_fold(v);
       if(v.board.empty()) return decide_preflop(v);
       return decide_postflop(v, rng);
+    case bot_style::EQUITY:
+      if(v.hole.size() != 2) return check_or_fold(v);
+      return decide_equity(v, rng);
   }
   return check_or_fold(v);
 }
