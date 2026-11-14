@@ -13,8 +13,8 @@ static void usage(const char* program){
          "  --port N        TCP port (default 4000)\n"
          "  --turn N        seconds per turn, 0 = no limit (default 300)\n"
          "  --chips N       starting chips (default 200)\n"
-         "  --next-hand N   seconds before the next hand starts by itself,\n"
-         "                  0 = wait for someone to type s (default 5)\n"
+         "  --next-hand N   start the next hand by itself after N seconds\n"
+         "                  (default 0: someone types s to start each hand)\n"
          "  --verbose       print every message sent and received\n"
          "Old style still works: %s [port] [seconds per turn] [starting chips]\n",
          program, program);
@@ -86,10 +86,12 @@ int main(int argc, char* argv[]){
   tp->set_listener(&game);
   tp->start_with_thread(port);
 
-  printf("Texas Hold'em server: port %d, %d s per turn, %d starting chips, blinds %d/%d, "
-         "next hand after %d s\n",
-         port, config.turn_seconds, config.starting_stack, config.small_blind, config.big_blind,
-         config.next_hand_seconds);
+  std::string turn = config.turn_seconds > 0 ? std::to_string(config.turn_seconds) + " s per turn" : "no turn limit";
+  std::string next = config.next_hand_seconds > 0
+                       ? "next hand starts by itself after " + std::to_string(config.next_hand_seconds) + " s"
+                       : "a player types s to start each hand";
+  printf("Texas Hold'em server: port %d, %s, %d starting chips, blinds %d/%d, %s\n",
+         port, turn.c_str(), config.starting_stack, config.small_blind, config.big_blind, next.c_str());
 
   // Turn time limit and next-hand countdown. Same lock as message handling.
   while(true){

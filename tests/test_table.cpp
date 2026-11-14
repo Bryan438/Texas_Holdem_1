@@ -456,3 +456,9 @@ TEST(table_cannot_start_twice){
   CHECK(h.last(harness::client(0), "error")["message"] == "a hand is already running");
   CHECK_EQ(h.t.hand_number(), 1);
 }
+
+TEST(table_default_waits_for_start){
+  table_config defaults;
+  CHECK_EQ(defaults.next_hand_seconds, 0);    // a player starts every hand
+  CHECK_EQ(defaults.turn_seconds, 300);       // 5 minutes per turn
+}
