@@ -1,3 +1,4 @@
+#include <algorithm>
 #include "hand_evaluator.h"
 
 static int pack(int category, const int ranks[], int count){
@@ -118,6 +119,108 @@ int evaluate_best(const Card* const cards[], int count){
     }
   }
   return best;
+}
+
+// Highest card of a straight in a set of ranks (bit r = rank r), 0 if none.
+static int straight_high(int mask){
+  if(mask & (1 << 14)){
+    mask |= 1 << 1;          // the ace also plays low: A-2-3-4-5
+  }
+  for(int high = 14; high >= 5; high--){
+    int run = 0x1F << (high - 4);
+    if((mask & run) == run){
+      return high;
+    }
+  }
+  return 0;
+}
+
+// The highest `count` ranks in `mask`, skipping the ranks in `skip`.
+static int top_ranks(int mask, int skip, int out[], int count){
+  int n = 0;
+  for(int r = 14; r >= 2 && n < count; r--){
+    if((mask & (1 << r)) && !(skip & (1 << r))){
+      out[n++] = r;
+    }
+  }
+  return n;
+}
+
+int evaluate_fast(const Card* const cards[], int count){
+  if(count < 5){
+    return 0;
+  }
+  int rank_count[15] = {0};
+  int suit_mask[5] = {0};
+  int suit_count[5] = {0};
+  int ranks = 0;
+  for(int i = 0; i < count; i++){
+    int r = cards[i]->get_number();
+    int s = cards[i]->get_suit();
+    rank_count[r]++;
+    suit_mask[s] |= 1 << r;
+    suit_count[s]++;
+    ranks |= 1 << r;
+  }
+
+  int flush_suit = 0;
+  for(int s = 1; s <= 4; s++){
+    if(suit_count[s] >= 5){
+      flush_suit = s;
+    }
+  }
+  if(flush_suit){
+    int high = straight_high(suit_mask[flush_suit]);
+    if(high){
+      return pack(STRAIGHT_FLUSH, &high, 1);
+    }
+  }
+
+  int quads = 0, trips[2] = {0, 0}, pairs[3] = {0, 0, 0};
+  int n_trips = 0, n_pairs = 0;
+  for(int r = 14; r >= 2; r--){
+    if(rank_count[r] == 4) quads = quads ? quads : r;
+    else if(rank_count[r] == 3 && n_trips < 2) trips[n_trips++] = r;
+    else if(rank_count[r] == 2 && n_pairs < 3) pairs[n_pairs++] = r;
+  }
+
+  int out[5];
+  if(quads){
+    out[0] = quads;
+    top_ranks(ranks, 1 << quads, out + 1, 1);
+    return pack(FOUR_OF_A_KIND, out, 2);
+  }
+  if(n_trips >= 1 && (n_trips >= 2 || n_pairs >= 1)){
+    out[0] = trips[0];
+    out[1] = n_trips >= 2 ? (n_pairs >= 1 ? std::max(trips[1], pairs[0]) : trips[1]) : pairs[0];
+    return pack(FULL_HOUSE, out, 2);
+  }
+  if(flush_suit){
+    top_ranks(suit_mask[flush_suit], 0, out, 5);
+    return pack(FLUSH, out, 5);
+  }
+  int high = straight_high(ranks);
+  if(high){
+    return pack(STRAIGHT, &high, 1);
+  }
+  if(n_trips == 1){
+    out[0] = trips[0];
+    top_ranks(ranks, 1 << trips[0], out + 1, 2);
+    return pack(THREE_OF_A_KIND, out, 3);
+  }
+  if(n_pairs >= 2){
+    out[0] = pairs[0];
+    out[1] = pairs[1];
+    top_ranks(ranks, (1 << pairs[0]) | (1 << pairs[1]), out + 2, 1);
+    return pack(TWO_PAIR, out, 3);
+  }
+  if(n_pairs == 1){
+    out[0] = pairs[0];
+    top_ranks(ranks, 1 << pairs[0], out + 1, 3);
+    return pack(ONE_PAIR, out, 4);
+  }
+  top_ranks(ranks, 0, out, 5);
+  return pack(HIGH_CARD, out, 5);
 }
 
 int hand_category_of(int score){

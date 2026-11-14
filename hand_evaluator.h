@@ -26,6 +26,11 @@ int evaluate_five(const Card* const cards[5]);
 // Returns 0 if fewer than five cards are given.
 int evaluate_best(const Card* const cards[], int count);
 
+// Same score as evaluate_best, much faster: counts ranks and suits once instead
+// of trying all 21 five-card combinations. Used by the bots' simulations, which
+// score millions of hands; the tests check it agrees with evaluate_best.
+int evaluate_fast(const Card* const cards[], int count);
+
 int hand_category_of(int score);
 const char* hand_category_name(int category);
 

@@ -17,11 +17,11 @@ thstats: thstats.o stats.o
 	$(CXX) $(CXXFLAGS) -o $@ $^
 
 # A bot that joins a running server like a player.
-thbot: thbot.o bot.o card.o hand_evaluator.o
+thbot: thbot.o bot.o equity.o card.o hand_evaluator.o
 	$(CXX) $(CXXFLAGS) -o $@ $^
 
 # Bots against bots on a table in one process: how strong is each style?
-thmatch: thmatch.o match.o bot.o stats.o $(CORE:.cpp=.o)
+thmatch: thmatch.o match.o bot.o equity.o stats.o $(CORE:.cpp=.o)
 	$(CXX) $(CXXFLAGS) -o $@ $^
 
 # json.hpp is large: only these depend on it.
@@ -36,7 +36,7 @@ $(JSON_OBJS): %.o: %.cpp $(HEADERS) third_party/json.hpp
 TEST_FLAGS = $(CXXFLAGS) -I. -fsanitize=address,undefined -fno-omit-frame-pointer
 TEST_SRCS = $(wildcard tests/*.cpp)
 
-TESTED = $(SRCS) stats.cpp bot.cpp match.cpp
+TESTED = $(SRCS) stats.cpp bot.cpp equity.cpp match.cpp
 
 tests/run_tests: $(TEST_SRCS) $(TESTED) $(HEADERS) tests/test_framework.h third_party/json.hpp
 	$(CXX) $(TEST_FLAGS) -o $@ $(TEST_SRCS) $(TESTED)

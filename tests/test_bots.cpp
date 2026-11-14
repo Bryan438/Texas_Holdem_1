@@ -147,7 +147,7 @@ TEST(bot_match_every_style_plays_legal_moves){
   options.hands = 300;
   options.seed = 5;
   match_result r = run_match({bot_style::RULES, bot_style::CALLING, bot_style::RANDOM,
-                              bot_style::RULES, bot_style::RANDOM, bot_style::CALLING}, options);
+                              bot_style::EQUITY, bot_style::RANDOM, bot_style::EQUITY}, options);
   CHECK_EQ(r.hands, 300);
   CHECK_EQ(r.illegal_moves, 0);
   long long total = 0;
@@ -181,5 +181,36 @@ TEST(bot_rules_beats_calling_station_and_random){
   match_result r = run_match({bot_style::RULES, bot_style::CALLING}, options);
   CHECK(bb_per_100(r.seats[0], r) - bb_per_100_margin(r.seats[0], r) > 0);
   r = run_match({bot_style::RULES, bot_style::RANDOM}, options);
+  CHECK(bb_per_100(r.seats[0], r) - bb_per_100_margin(r.seats[0], r) > 0);
+}
+
+static bot_move equity_bot(const json& state){
+  std::mt19937 rng(1);
+  return decide(state, bot_style::EQUITY, rng);
+}
+
+TEST(bot_equity_decisions){
+  // Aces preflop: raise to 3 big blinds.
+  bot_move m = equity_bot(turn_state({"As", "Ah"}, {}, 3, 2, 2, 4, 200));
+  CHECK(m.action == "raise" && m.amount == 6);
+  // 7-2 offsuit against a raise: fold.
+  CHECK(equity_bot(turn_state({"7d", "2c"}, {}, 11, 8, 6, 14, 198)).action == "fold");
+  // The nut flush on the river: bet three quarters of the pot, raise a bet.
+  m = equity_bot(turn_state({"Ah", "Kh"}, {"9h", "4h", "2h", "3c", "Td"}, 20, 0, 0, 2, 190));
+  CHECK(m.action == "raise" && m.amount == 15);
+  m = equity_bot(turn_state({"Ah", "Kh"}, {"9h", "4h", "2h", "3c", "Td"}, 40, 20, 20, 40, 190));
+  CHECK(m.action == "raise" && m.amount == 60);
+  // Nothing on the river against a pot-sized bet: fold.
+  CHECK(equity_bot(turn_state({"4c", "3d"}, {"Ks", "Jc", "9d", "8h", "2s"}, 40, 20, 20, 40, 190)).action == "fold");
+  // A flush draw on the flop against a small bet: the price is right, call.
+  CHECK(equity_bot(turn_state({"Ah", "4h"}, {"Kh", "9h", "2c"}, 15, 3, 3, 6, 190)).action == "call");
+}
+
+TEST(bot_equity_beats_calling_station_and_random){
+  match_options options;
+  options.hands = 1000;
+  match_result r = run_match({bot_style::EQUITY, bot_style::CALLING}, options);
+  CHECK(bb_per_100(r.seats[0], r) - bb_per_100_margin(r.seats[0], r) > 0);
+  r = run_match({bot_style::EQUITY, bot_style::RANDOM}, options);
   CHECK(bb_per_100(r.seats[0], r) - bb_per_100_margin(r.seats[0], r) > 0);
 }
