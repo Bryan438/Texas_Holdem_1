@@ -20,7 +20,7 @@ struct table_config{
   int starting_stack = 200;
   int small_blind = 1;
   int big_blind = 2;
-  int turn_seconds = 30;   // 0 = no time limit
+  int turn_seconds = 300;  // 5 minutes; 0 = no time limit
   bool log_events = true;  // print events on the server console
 };
 
