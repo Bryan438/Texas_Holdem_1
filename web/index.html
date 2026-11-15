@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Texas Hold'em</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="bar">
+    <h1 id="title"></h1>
+    <span id="meta" class="meta"></span>
+    <span id="conn" class="conn" role="status"></span>
+    <button id="lang" class="quiet" type="button"></button>
+  </header>
+
+  <!-- Before sitting down -->
+  <main id="join" class="join">
+    <form id="join-form" class="card-panel">
+      <h2 id="join-title"></h2>
+      <label for="name" id="join-label"></label>
+      <input id="name" name="name" maxlength="24" autocomplete="nickname" required>
+      <p id="join-error" class="error" role="alert"></p>
+      <button id="join-button" class="primary" type="submit"></button>
+      <p id="join-hint" class="hint"></p>
+    </form>
+  </main>
+
+  <!-- At the table -->
+  <main id="game" class="game" hidden>
+    <section class="play">
+      <div id="table" class="table">
+        <div class="felt"></div>
+        <div id="center" class="center"></div>
+        <div id="seats" class="ring"></div>
+      </div>
+      <div class="dock">
+        <div id="mine" class="mine"></div>
+        <div id="actions" class="actions"></div>
+      </div>
+      <p id="notice" class="notice" role="alert"></p>
+    </section>
+    <aside class="side">
+      <div class="side-head">
+        <h2 id="log-title"></h2>
+        <button id="summary-button" class="quiet" type="button" hidden></button>
+      </div>
+      <ol id="log" class="log"></ol>
+    </aside>
+  </main>
+
+  <dialog id="summary" class="summary"></dialog>
+
+  <noscript>This page needs JavaScript to play.</noscript>
+  <script type="module" src="app.js"></script>
+</body>
+</html>

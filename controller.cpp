@@ -2,6 +2,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
 #include <string>
 #include <thread>
 
@@ -10,7 +11,9 @@
 
 static void usage(const char* program){
   printf("Usage: %s [options]\n"
-         "  --port N        TCP port (default 4000)\n"
+         "  --port N        TCP port for the terminal client and bots (default 4000)\n"
+         "  --web-port N    port for browsers: open http://localhost:N (default 8080, 0 = off)\n"
+         "  --web DIR       folder with the web client's files (default: web, next to this program)\n"
          "  --turn N        seconds per turn, 0 = no limit (default 300)\n"
          "  --chips N       starting chips (default 200)\n"
          "  --next-hand N   start the next hand by itself after N seconds\n"
@@ -37,6 +40,11 @@ static int number(const char* program, const char* text){
 
 int main(int argc, char* argv[]){
   int port = 4000;
+  int web_port = 8080;
+  // The web client's files sit next to the program, wherever it is started from.
+  std::string program = argv[0];
+  size_t slash = program.rfind('/');
+  std::string web_root = (slash == std::string::npos ? "" : program.substr(0, slash + 1)) + "web";
   table_config config;
   config.history_path = "hands.jsonl";
   bool verbose = getenv("TH_VERBOSE") != NULL;
@@ -54,6 +62,12 @@ int main(int argc, char* argv[]){
     }
     else if(arg == "--port" && has_value){
       port = number(argv[0], argv[++i]);
+    }
+    else if(arg == "--web-port" && has_value){
+      web_port = number(argv[0], argv[++i]);
+    }
+    else if(arg == "--web" && has_value){
+      web_root = argv[++i];
     }
     else if(arg == "--turn" && has_value){
       config.turn_seconds = number(argv[0], argv[++i]);
@@ -95,6 +109,9 @@ int main(int argc, char* argv[]){
   table game(tp, config);
   tp->set_listener(&game);
   tp->start_with_thread(port);
+  if(web_port > 0 && web_port != port){
+    tp->start_web_with_thread(web_port, web_root);
+  }
 
   std::string turn = config.turn_seconds > 0 ? std::to_string(config.turn_seconds) + " s per turn" : "no turn limit";
   std::string next = config.next_hand_seconds > 0
@@ -102,6 +119,14 @@ int main(int argc, char* argv[]){
                        : "a player types s to start each hand";
   printf("Texas Hold'em server: port %d, %s, %d starting chips, blinds %d/%d, %s\n",
          port, turn.c_str(), config.starting_stack, config.small_blind, config.big_blind, next.c_str());
+  if(web_port > 0 && web_port != port){
+    if(std::ifstream(web_root + "/index.html")){
+      printf("Play in a browser: http://localhost:%d\n", web_port);
+    }
+    else{
+      printf("Web client not found in %s (pass --web DIR, or --web-port 0 to turn it off)\n", web_root.c_str());
+    }
+  }
   if(!config.history_path.empty()){
     printf("Saving hands to %s (contains every player's cards: keep it to yourself)\n",
            config.history_path.c_str());

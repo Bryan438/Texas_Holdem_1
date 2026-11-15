@@ -6,8 +6,8 @@
 > **Language:** C++17  
 > **Status:** 🛠 Alpha – playable, under refactor  
 > **Repos:**  
-> • Server (this repo)  
-> • Client → https://github.com/Bryan438/TH_Client  
+> • Server, bots and web client (this repo)  
+> • Terminal client → https://github.com/Bryan438/TH_Client  
 
 ![GitHub last commit](https://img.shields.io/github/last-commit/Bryan438/Texas_Holdem_1?logo=github)
 ![Lines of code](https://img.shields.io/tokei/lines/github/Bryan438/Texas_Holdem_1)
@@ -16,7 +16,7 @@
 ---
 
 ## Project Goal
-A lightweight, headless Texas Hold’em engine that **accepts socket connections from multiple CLI/GUI clients**, enforces game flow, and sends every player the full game state after each change.
+A lightweight Texas Hold’em engine that **accepts connections from terminal clients, browsers and bots at the same table**, enforces game flow, and sends every player the full game state after each change.
 
 ---
 
@@ -25,6 +25,7 @@ A lightweight, headless Texas Hold’em engine that **accepts socket connections
 flowchart TD
   A["Clients (TH_Client)"] -- "JSON lines over TCP" --> B["transport<br/>one read thread per client"]
   H["Bots (thbot, bot.cpp)"] -- "same protocol" --> B
+  W["Browsers (web/)"] -- "same JSON over a WebSocket" --> B
   B -- "on_message / on_disconnect<br/>one at a time, under a mutex" --> C["table<br/>game state machine"]
   C -- "state / event / error<br/>via sender interface" --> B
   C --> D["hand_evaluator<br/>best 5 of 7"]
@@ -39,6 +40,8 @@ flowchart TD
 ```bash
 make                      # builds ./thserver, ./thstats, ./thbot, ./thmatch and ./thenv
 ./thserver                # port 4000, 5 min per turn, 200 chips, blinds 1/2; type s to start each hand
+                          # then open http://localhost:8080 to play in a browser
+./thserver --web-port 9000          # browsers on another port (0 = no web client)
 ./thserver --port 4000 --turn 60 --chips 500 --next-hand 10
 ./thserver --turn 0       # no time limit
 ./thserver --next-hand 10 # optional: start the next hand by itself 10 s after the last one
@@ -47,11 +50,35 @@ make                      # builds ./thserver, ./thstats, ./thbot, ./thmatch and
 ./thserver --verbose      # also print every message sent and received
 ./thserver --help
 ```
-Players connect with the client: https://github.com/Bryan438/TH_Client
+Players sit down from a browser (below), from the terminal client
+(https://github.com/Bryan438/TH_Client), or both at the same table.
+
+## Play in a browser
+Start `./thserver` and open **http://localhost:8080**. Friends on the same network open
+`http://<your ip>:8080`. Type a name, sit down, and press the deal button once two players
+have chips; to play against bots, start some in another terminal (`./thbot --bots 3`, see Bots).
+
+- The page shows the table from your seat: everyone's stack, bet and status, the board,
+  the pot, your cards and best hand, whose turn it is with the time left, and a hand log.
+- On your turn: fold, check or call, or raise with the slider, the number box or the
+  min / ½ pot / pot / all-in buttons. Keys: `F` fold, `C` check or call, `R` raise.
+- "Review last hand" shows the finished hand street by street.
+- English and Chinese; the button in the top right switches, and the choice is remembered.
+- Reloading the page or losing the connection takes your seat back by itself (the page keeps
+  the token). As with any client, disconnecting during a hand folds that hand.
+
+How it works: the page is plain HTML, CSS and JavaScript in `web/`, no build step and no
+libraries. `thserver` serves those files itself on the web port and upgrades `/ws` to a
+WebSocket (handshake, frames, SHA-1 and base64 are in `websocket.cpp`, about 300 lines, no
+dependencies). Over the WebSocket travel the same JSON messages as over TCP, one per
+WebSocket message instead of one per line, so the table does not know or care which kind
+of client a player uses. A WebSocket is only accepted from the server's own page: another
+website open in your browser cannot sit down at your table.
 
 ## Protocol
 Newline-delimited JSON over TCP: one JSON object per line, both directions.
-You can even play by hand with `nc localhost 4000`.
+You can even play by hand with `nc localhost 4000`. Browsers send and receive the same
+objects over a WebSocket (`ws://host:8080/ws`), one per message.
 
 Client -> server
 ```jsonc
@@ -69,8 +96,11 @@ Server -> client
   your own hole cards (everyone's still in the hand at showdown), your best hand,
   whose turn it is and seconds left, seconds until the next hand starts, and, on your turn,
   the allowed actions with the raise range
-- `event` - a line for the game log ("Bob raises to 20", "Flop: Q♥ 8♥ 4♠")
-- `error` - why a message was rejected
+- `event` - a line for the game log: `text` is ready to print ("Bob raises to 20",
+  "Flop: Q♥ 8♥ 4♠"); `kind` and fields such as `name`, `amount`, `allin`, `cards`, `hand`
+  say the same for clients that word it themselves (the web client, in two languages)
+- `error` - why a message was rejected: `message` to print, `code` to word it yourself
+  (`not_your_turn`, `name_taken`, `table_full`, ...)
 - `hand_summary` - the hand that just ended: actions by street, board, showdown, winners;
   hole cards only for yourself and for hands shown at showdown
 
@@ -228,13 +258,22 @@ it each opponent's statistics from the hand history.
 ## Test
 ```bash
 make test       # builds and runs tests/run_tests with AddressSanitizer + UBSan
+make test-web   # the web client's logic and translations (needs Node 18+, nothing to install)
 ```
-GitHub Actions runs the build and the tests on Linux and macOS for every push and pull request.
+GitHub Actions runs the build and both sets of tests on Linux and macOS for every push and
+pull request, and checks that a freshly started server hands out the web page.
 
 Tests have no external dependencies (`tests/test_framework.h`). They cover:
 - hand ranking (`hand_evaluator.cpp`): every category, kickers, wheel straight, best 5 of 7
 - pot splitting (`pot_calculator.cpp`): main pot, multiple side pots, uncalled bets, odd chips
 - line framing (`line_buffer.h`, `transport.cpp`) across split / merged TCP reads
+- browsers (`websocket.cpp`, `transport.cpp`): SHA-1 and base64 against known answers, the
+  handshake, frames of every length, messages split over frames or reads, what a browser
+  never sends, a whole WebSocket connection from handshake to close, web files served and
+  paths outside `web/` refused, WebSockets from other sites refused
+- the fields of `event` and `error` messages
+- the web client (`web/tests`, run by Node): seat and chip positions, raise sizes, the
+  last-hand review, every string present in both languages with the same placeholders
 - full hands driven through `table::on_message` with a fake clock: state reaching every
   player after every action, private hole cards, minimum raises, all-ins, turn timer,
   disconnect and reconnect (with and without the token), the next-hand countdown,

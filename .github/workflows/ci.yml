@@ -22,3 +22,15 @@ jobs:
           ./thmatch --hands 500 rl equity rules calling
       - name: Run tests (AddressSanitizer + UBSan)
         run: make test
+      - name: Web client tests
+        run: make test-web
+      - name: The server hands out the web page
+        run: |
+          ./thserver --port 4190 --web-port 8190 --no-history &
+          server=$!
+          sleep 1
+          curl --fail --silent http://localhost:8190/ | grep -q '<script type="module" src="app.js">'
+          curl --fail --silent http://localhost:8190/app.js | grep -q 'WebSocket'
+          # Nothing outside web/ is handed out.
+          test "$(curl --silent --path-as-is --output /dev/null --write-out '%{http_code}' http://localhost:8190/../Makefile)" = 404
+          kill $server

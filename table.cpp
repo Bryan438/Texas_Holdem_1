@@ -65,7 +65,7 @@ void table::on_connect(int client){
 void table::on_message(int client, const std::string& line){
   json msg = json::parse(line, nullptr, false);
   if(msg.is_discarded() || !msg.is_object() || !msg.contains("type") || !msg["type"].is_string()){
-    send_error(client, "bad message: expected a JSON object with a \"type\" field");
+    send_error(client, "bad message: expected a JSON object with a \"type\" field", "bad_message");
     return;
   }
   std::string type = msg["type"].get<std::string>();
@@ -75,7 +75,7 @@ void table::on_message(int client, const std::string& line){
     return;
   }
   if(seat_of(client) < 0){
-    send_error(client, "join the table first");
+    send_error(client, "join the table first", "join_first");
     return;
   }
   if(type == "start"){
@@ -85,7 +85,7 @@ void table::on_message(int client, const std::string& line){
     handle_action(client, msg);
   }
   else{
-    send_error(client, "unknown message type: " + type);
+    send_error(client, "unknown message type: " + type, "bad_message");
   }
 }
 
@@ -97,12 +97,12 @@ void table::on_disconnect(int client){
   player& p = *seats[s];
   p.connected = false;
   p.socket = -1;
-  event(p.name + " disconnected");
+  event(p.name + " disconnected", {{"kind", "disconnected"}, {"name", p.name}});
 
   if(current_stage != WAITING && p.in_hand){
     fold_seat(s);
     record_action(s, "fold", 0, 0, "disconnected");
-    event(p.name + " folds (disconnected)");
+    event(p.name + " folds (disconnected)", {{"kind", "fold"}, {"name", p.name}, {"reason", "disconnected"}});
     if(turn == s || count_in_hand() <= 1){
       continue_hand(s);
       return;
@@ -113,11 +113,11 @@ void table::on_disconnect(int client){
 
 void table::handle_join(int client, const json& msg){
   if(seat_of(client) >= 0){
-    send_error(client, "you are already seated");
+    send_error(client, "you are already seated", "already_seated");
     return;
   }
   if(!msg.contains("name") || !msg["name"].is_string()){
-    send_error(client, "join needs a \"name\"");
+    send_error(client, "join needs a \"name\"", "name_invalid");
     return;
   }
   std::string name = msg["name"].get<std::string>();
@@ -125,7 +125,7 @@ void table::handle_join(int client, const json& msg){
   name.erase(name.find_last_not_of(' ') + 1);
   bool printable = std::all_of(name.begin(), name.end(), [](char c){ return (unsigned char)c >= 0x20; });
   if(name.empty() || name.size() > 24 || !printable){
-    send_error(client, "name must be 1-24 printable characters");
+    send_error(client, "name must be 1-24 printable characters", "name_invalid");
     return;
   }
 
@@ -134,19 +134,19 @@ void table::handle_join(int client, const json& msg){
   for(size_t i = 0; i < seats.size(); i++){
     if(seats[i]->name == name){
       if(seats[i]->connected){
-        send_error(client, "name \"" + name + "\" is taken");
+        send_error(client, "name \"" + name + "\" is taken", "name_taken");
         return;
       }
       std::string token = msg.contains("token") && msg["token"].is_string() ? msg["token"].get<std::string>() : "";
       if(token != seats[i]->token){
         send_error(client, "name \"" + name + "\" belongs to a player who disconnected; "
-                           "only their client can take the seat back");
+                           "only their client can take the seat back", "name_reserved");
         return;
       }
       seats[i]->socket = client;
       seats[i]->connected = true;
       send(client, {{"type", "welcome"}, {"seat", (int)i}, {"name", name}, {"token", token}});
-      event(name + " reconnected");
+      event(name + " reconnected", {{"kind", "reconnected"}, {"name", name}});
       broadcast_state();
       return;
     }
@@ -167,7 +167,7 @@ void table::handle_join(int client, const json& msg){
     }
   }
   if(s < 0){
-    send_error(client, "the table is full");
+    send_error(client, "the table is full", "table_full");
     return;
   }
 
@@ -177,28 +177,29 @@ void table::handle_join(int client, const json& msg){
   p.stack = config.starting_stack;
   p.token = make_token();
   send(client, {{"type", "welcome"}, {"seat", s}, {"name", name}, {"token", p.token}});
-  event(name + " joined" + (current_stage == WAITING ? "" : " (plays from the next hand)"));
+  event(name + " joined" + (current_stage == WAITING ? "" : " (plays from the next hand)"),
+        {{"kind", "joined"}, {"name", name}, {"next_hand", current_stage != WAITING}});
   broadcast_state();
 }
 
 void table::handle_start(int client){
   if(current_stage != WAITING){
-    send_error(client, "a hand is already running");
+    send_error(client, "a hand is already running", "hand_running");
     return;
   }
   if(!start_hand()){
-    send_error(client, "need at least 2 connected players with chips");
+    send_error(client, "need at least 2 connected players with chips", "not_enough_players");
   }
 }
 
 void table::handle_action(int client, const json& msg){
   int s = seat_of(client);
   if(current_stage == WAITING){
-    send_error(client, "no hand is running");
+    send_error(client, "no hand is running", "no_hand");
     return;
   }
   if(s != turn){
-    send_error(client, "it is not your turn");
+    send_error(client, "it is not your turn", "not_your_turn");
     return;
   }
   std::string action = msg.contains("action") && msg["action"].is_string() ? msg["action"].get<std::string>() : "";
@@ -206,7 +207,7 @@ void table::handle_action(int client, const json& msg){
 
   std::string error;
   if(!apply_action(s, action, amount, error)){
-    send_error(client, error);
+    send_error(client, error, "bad_action");
     send(client, state_for(s));
     return;
   }
@@ -218,7 +219,7 @@ void table::tick(){
     if(next_hand_at > 0 && now_ms() >= next_hand_at){
       next_hand_at = 0;
       if(!start_hand()){
-        event("Not enough players with chips. Waiting for someone to join.");
+        event("Not enough players with chips. Waiting for someone to join.", {{"kind", "not_enough_players"}});
         broadcast_state();
       }
     }
@@ -232,7 +233,7 @@ void table::tick(){
   }
   int s = turn;
   player& p = *seats[s];
-  event(p.name + " ran out of time");
+  event(p.name + " ran out of time", {{"kind", "timeout"}, {"name", p.name}});
   std::string error;
   apply_action(s, to_call(p) == 0 ? "check" : "fold", 0, error, "timeout");
   continue_hand(s);
@@ -298,9 +299,12 @@ bool table::start_hand(){
   current_bet = config.big_blind;
   last_raise_size = config.big_blind;
 
-  event("Hand #" + std::to_string(hand_count) + " - dealer " + seats[dealer]->name);
-  event(seats[small_blind_seat]->name + " posts small blind " + std::to_string(sb));
-  event(seats[big_blind_seat]->name + " posts big blind " + std::to_string(bb));
+  event("Hand #" + std::to_string(hand_count) + " - dealer " + seats[dealer]->name,
+        {{"kind", "hand_start"}, {"hand", hand_count}, {"name", seats[dealer]->name}});
+  event(seats[small_blind_seat]->name + " posts small blind " + std::to_string(sb),
+        {{"kind", "small_blind"}, {"name", seats[small_blind_seat]->name}, {"amount", sb}});
+  event(seats[big_blind_seat]->name + " posts big blind " + std::to_string(bb),
+        {{"kind", "big_blind"}, {"name", seats[big_blind_seat]->name}, {"amount", bb}});
 
   continue_hand(big_blind_seat);
   return true;
@@ -314,7 +318,7 @@ bool table::apply_action(int s, const std::string& action, int amount, std::stri
   if(action == "fold"){
     fold_seat(s);
     record_action(s, "fold", 0, 0, reason);
-    event(p.name + " folds");
+    event(p.name + " folds", {{"kind", "fold"}, {"name", p.name}});
     return true;
   }
   if(action == "check"){
@@ -324,7 +328,7 @@ bool table::apply_action(int s, const std::string& action, int amount, std::stri
     }
     p.acted = true;
     record_action(s, "check", 0, 0, reason);
-    event(p.name + " checks");
+    event(p.name + " checks", {{"kind", "check"}, {"name", p.name}});
     return true;
   }
   if(action == "call"){
@@ -335,7 +339,8 @@ bool table::apply_action(int s, const std::string& action, int amount, std::stri
     int put = p.put_in(call_amount);
     p.acted = true;
     record_action(s, "call", put, 0, reason);
-    event(p.name + " calls " + std::to_string(put) + (p.all_in ? " and is all-in" : ""));
+    event(p.name + " calls " + std::to_string(put) + (p.all_in ? " and is all-in" : ""),
+          {{"kind", "call"}, {"name", p.name}, {"amount", put}, {"allin", p.all_in}});
     return true;
   }
   if(action == "raise"){
@@ -365,7 +370,8 @@ bool table::apply_action(int s, const std::string& action, int amount, std::stri
       }
     }
     current_bet = amount;
-    event(p.name + (was_bet ? " bets " : " raises to ") + std::to_string(amount) + (p.all_in ? " (all-in)" : ""));
+    event(p.name + (was_bet ? " bets " : " raises to ") + std::to_string(amount) + (p.all_in ? " (all-in)" : ""),
+          {{"kind", was_bet ? "bet" : "raise"}, {"name", p.name}, {"amount", amount}, {"allin", p.all_in}});
     return true;
   }
   error = "unknown action \"" + action + "\" (use fold, check, call or raise)";
@@ -414,12 +420,14 @@ void table::deal_next_street(){
       board[board_count++] = deck->get_card(card_index++);
     }
     current_stage = FLOP;
-    event("Flop: " + board[0]->text() + " " + board[1]->text() + " " + board[2]->text());
+    event("Flop: " + board[0]->text() + " " + board[1]->text() + " " + board[2]->text(),
+          {{"kind", "flop"}, {"cards", {board[0]->code(), board[1]->code(), board[2]->code()}}});
   }
   else{
     board[board_count++] = deck->get_card(card_index++);
     current_stage = current_stage == FLOP ? TURN : RIVER;
-    event(std::string(current_stage == TURN ? "Turn: " : "River: ") + board[board_count - 1]->text());
+    event(std::string(current_stage == TURN ? "Turn: " : "River: ") + board[board_count - 1]->text(),
+          {{"kind", current_stage == TURN ? "turn" : "river"}, {"cards", {board[board_count - 1]->code()}}});
   }
 }
 
@@ -439,7 +447,9 @@ void table::finish_hand(){
       p.score = evaluate_best(seven, 7);
       scores[i] = p.score;
       event(p.name + " shows " + p.cards[0]->text() + " " + p.cards[1]->text() + " - " +
-            hand_category_name(hand_category_of(p.score)));
+            hand_category_name(hand_category_of(p.score)),
+            {{"kind", "show"}, {"name", p.name}, {"cards", {p.cards[0]->code(), p.cards[1]->code()}},
+             {"hand", hand_category_name(hand_category_of(p.score))}});
     }
   }
 
@@ -453,7 +463,8 @@ void table::finish_hand(){
     seats[i]->stack += payout[i];
     std::string hand = showdown && in_hand[i] ? hand_category_name(hand_category_of(scores[i])) : "";
     last_result.push_back({i, payout[i], hand});
-    event(seats[i]->name + " wins " + std::to_string(payout[i]) + (hand.empty() ? "" : " with " + hand));
+    event(seats[i]->name + " wins " + std::to_string(payout[i]) + (hand.empty() ? "" : " with " + hand),
+          {{"kind", "win"}, {"name", seats[i]->name}, {"amount", payout[i]}, {"hand", hand}});
   }
 
   // Complete the hand record.
@@ -499,10 +510,11 @@ void table::finish_hand(){
   current_bet = 0;
   if(config.next_hand_seconds > 0){
     next_hand_at = now_ms() + config.next_hand_seconds * 1000LL;
-    event("Hand over. Next hand in " + std::to_string(config.next_hand_seconds) + " s.");
+    event("Hand over. Next hand in " + std::to_string(config.next_hand_seconds) + " s.",
+          {{"kind", "hand_over"}, {"next_hand_in", config.next_hand_seconds}});
   }
   else{
-    event("Hand over. Send start for the next hand.");
+    event("Hand over. Send start for the next hand.", {{"kind", "hand_over"}, {"next_hand_in", 0}});
   }
   broadcast_state();
 }
@@ -720,11 +732,16 @@ void table::broadcast_state(){
   }
 }
 
-void table::event(const std::string& text){
+// `text` is the line the terminal client prints. `data` says the same thing
+// in fields ("kind" plus who, how much, which cards), so that a client can
+// word the line itself, for example in another language.
+void table::event(const std::string& text, json data){
   if(config.log_events){
     printf("[table] %s\n", text.c_str());
   }
-  json msg = {{"type", "event"}, {"text", text}};
+  json msg = data.is_object() ? data : json::object();
+  msg["type"] = "event";
+  msg["text"] = text;
   for(auto& p : seats){
     if(p->connected){
       send(p->socket, msg);
@@ -739,6 +756,7 @@ void table::send(int client, const json& msg){
   }
 }
 
-void table::send_error(int client, const std::string& message){
-  send(client, {{"type", "error"}, {"message", message}});
+// `code` names the kind of error for clients that word it themselves.
+void table::send_error(int client, const std::string& message, const std::string& code){
+  send(client, {{"type", "error"}, {"message", message}, {"code", code}});
 }
