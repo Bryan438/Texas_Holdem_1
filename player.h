@@ -1,6 +1,7 @@
 #ifndef _PLAYER_H_
 #define _PLAYER_H_
 
+#include <cstdint>
 #include <string>
 #include "card.h"
 
@@ -12,6 +13,12 @@ struct player{
   std::string token;        // secret given at join, needed to reconnect
   bool connected = true;
   int stack = 0;            // chips not yet in the pot
+  bool bot = false;         // said so when joining (thbot does); people do not
+  int buy_in = 0;           // chips at the start of this game, to tell who is up or down
+
+  // Disconnected during a hand: the cards are held until this time (table
+  // clock, ms), then folded unless the player is back. 0 = not waiting.
+  int64_t away_until = 0;
 
   // Per hand
   bool dealt = false;       // was dealt into the current/last hand

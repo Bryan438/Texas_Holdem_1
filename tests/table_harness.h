@@ -21,6 +21,7 @@ class fake_sender: public sender{
 table_config quiet_config(int turn_seconds = 30, int next_hand_seconds = 0){
   table_config c;
   c.log_events = false;
+  c.disconnect_grace_seconds = 0;   // most tests want a disconnect to fold at once
   c.turn_seconds = turn_seconds;
   c.next_hand_seconds = next_hand_seconds;
   return c;

@@ -18,6 +18,8 @@ static void usage(const char* program){
          "  --chips N       starting chips (default 200)\n"
          "  --next-hand N   start the next hand by itself after N seconds\n"
          "                  (default 0: someone types s to start each hand)\n"
+         "  --grace N       a player who disconnects during a hand keeps their cards for\n"
+         "                  N seconds before folding (default 30, 0 = folds at once)\n"
          "  --history FILE  append every finished hand to FILE as JSON lines\n"
          "                  (default hands.jsonl; it holds every player's cards)\n"
          "  --no-history    do not save hands\n"
@@ -80,6 +82,9 @@ int main(int argc, char* argv[]){
     }
     else if(arg == "--no-history"){
       config.history_path = "";
+    }
+    else if(arg == "--grace" && has_value){
+      config.disconnect_grace_seconds = number(argv[0], argv[++i]);
     }
     else if(arg == "--next-hand" && has_value){
       config.next_hand_seconds = number(argv[0], argv[++i]);

@@ -17,6 +17,11 @@ function remember(storage, key, value) {
   try { storage.setItem(key, value); } catch { /* play on without it */ }
 }
 
+// The log and the last hand survive a reload of the tab, like the seat does.
+function recalled(key, fallback) {
+  try { return JSON.parse(remembered(sessionStorage, key)) || fallback; } catch { return fallback; }
+}
+
 const S = {
   lang: remembered(localStorage, 'th.lang') || ((navigator.language || '').toLowerCase().startsWith('zh') ? 'zh' : 'en'),
   ws: null,
@@ -26,8 +31,9 @@ const S = {
   wantName: remembered(sessionStorage, 'th.name') || '',   // set: join as soon as connected
   joinError: null,
   state: null,
-  log: [],
-  summary: null,
+  log: remembered(sessionStorage, 'th.name') ? recalled('th.log', []) : [],
+  summary: remembered(sessionStorage, 'th.name') ? recalled('th.summary', null) : null,
+  wasOver: false,
   raiseTo: null,
   decision: '',
   turnEndsAt: 0,
@@ -139,14 +145,26 @@ function onMessage(m) {
       S.raiseTo = sizes ? sizes.min : null;
     }
     renderGame();
+    // The moment the game ends, show how it went.
+    if (m.game_over && !S.wasOver) showStandings();
+    if (!m.game_over && $('standings').open) $('standings').close();
+    S.wasOver = Boolean(m.game_over);
   }
   else if (m.type === 'event') {
     S.log.push(m);
     if (S.log.length > 400) S.log.splice(0, S.log.length - 400);
+    remember(sessionStorage, 'th.log', JSON.stringify(S.log));
     renderLog(m);
+    if (m.kind === 'new_game') {
+      // The last hand of the game before is not this game's to review.
+      S.summary = null;
+      remember(sessionStorage, 'th.summary', 'null');
+      renderStatic();
+    }
   }
   else if (m.type === 'hand_summary') {
     S.summary = m;
+    remember(sessionStorage, 'th.summary', JSON.stringify(m));
     renderStatic();
   }
   else if (m.type === 'error') {
@@ -183,6 +201,8 @@ function renderStatic() {
   $('log-title').textContent = t('log.title');
   $('summary-button').textContent = t('summary.button');
   $('summary-button').hidden = !S.summary;
+  $('end-game').textContent = t('manage.end');
+  $('new-game').textContent = t('manage.new');
   renderConnection();
 }
 
@@ -198,6 +218,7 @@ function renderAll() {
   renderScreen();
   renderLog();
   if ($('summary').open) renderSummary();
+  if ($('standings').open) renderStandings();
 }
 
 function renderGame() {
@@ -205,6 +226,9 @@ function renderGame() {
   const yours = Boolean(st && st.actions);
   document.title = (yours ? '● ' + t('turn.yours') + ' · ' : '') + t('title');
   if (!st) return;
+  // Ending or restarting is offered only while every other player is a bot.
+  $('manage').hidden = !st.solo;
+  $('end-game').hidden = Boolean(st.game_over);
   $('meta').textContent = (st.hand > 0 ? t('meta.hand', { n: st.hand }) + ' · ' : '') +
                           t('meta.blinds', { sb: st.blinds[0], bb: st.blinds[1] });
   renderSeats(st);
@@ -221,15 +245,22 @@ function renderSeats(st) {
   for (const seat of st.seats) {
     const at = seatPosition(seat.seat, st.you, st.seats.length);
     const mine = seat.seat === st.you;
-    const out = ['folded', 'sitting_out', 'disconnected', 'busted'].includes(seat.status);
-    const holding = live && (seat.status === 'active' || seat.status === 'allin');
+    // Disconnected in the middle of a hand: still holding cards, for a while.
+    const away = live && seat.reconnect_in != null;
+    const out = !away && ['folded', 'sitting_out', 'disconnected', 'busted'].includes(seat.status);
+    const holding = live && (seat.status === 'active' || seat.status === 'allin' || away);
 
     let cards = [];
     if (seat.cards) cards = seat.cards.map((code) => cardEl(code, 'small'));
     else if (holding) cards = [cardEl('back', 'small'), cardEl('back', 'small')];
 
-    let status = '', statusClass = 'status';
-    if (out || seat.status === 'allin') {
+    let status = '', statusClass = 'status', awayUntil = null;
+    if (away) {
+      awayUntil = Date.now() + seat.reconnect_in * 1000;
+      status = t('status.away', { n: seat.reconnect_in });
+      statusClass += ' away';
+    }
+    else if (out || seat.status === 'allin') {
       status = t('status.' + seat.status);
       if (seat.status === 'allin') statusClass += ' allin';
     }
@@ -255,10 +286,11 @@ function renderSeats(st) {
       el('div', { class: 'badges' }, badges),
       el('div', { class: 'cards' }, cards),
       el('div', { class: 'name', title: seat.name }, mine ? `${seat.name} (${t('you')})` : seat.name),
-      el('div', { class: 'stack' }, formatChips(seat.stack)),
+      el('div', { class: 'stack' }, formatChips(seat.stack), seat.bot && el('span', { class: 'tag' }, t('bot.tag'))),
       // On a narrow screen the bet is written in the seat; on a wide one it lies on the felt.
       seat.bet > 0 && el('div', { class: 'betline' }, t('bet.label') + ' ' + formatChips(seat.bet)),
-      turn && S.turnEndsAt ? el('div', { class: 'timer' }) : el('div', { class: statusClass }, status)));
+      turn && S.turnEndsAt && !away ? el('div', { class: 'timer' })
+        : el('div', { class: statusClass, 'data-away-until': awayUntil }, status)));
 
     if (seat.bet > 0) {
       nodes.push(el('div', { class: 'bet', 'data-seat': seat.seat }, formatChips(seat.bet)));
@@ -285,7 +317,8 @@ function placeBets() {
 
 function renderCenter(st) {
   const live = st.stage !== 'waiting';
-  const nodes = [el('div', { class: 'stage' }, t('stage.' + st.stage))];
+  const nodes = [st.game_over ? el('div', { class: 'over' }, t('over.title'))
+                              : el('div', { class: 'stage' }, t('stage.' + st.stage))];
   if (live || st.board.length > 0) {
     const slots = [0, 1, 2, 3, 4].map((i) => cardEl(st.board[i] || 'slot'));
     nodes.push(el('div', { class: 'board' }, slots));
@@ -312,6 +345,13 @@ function renderMine(st) {
 function renderActions(st) {
   const me = st.seats[st.you];
   const box = $('actions');
+
+  if (st.game_over) {
+    fill(box, el('div', { class: 'status-line' }, t('over.line')), el('div', { class: 'buttons' },
+      el('button', { class: 'primary', type: 'button', onclick: () => send({ type: 'new_game' }) }, t('manage.new')),
+      el('button', { type: 'button', onclick: showStandings }, t('over.show'))));
+    return;
+  }
 
   if (st.stage === 'waiting') {
     const ready = st.seats.filter((seat) => seat.status === 'ready').length;
@@ -447,6 +487,44 @@ function renderSummary() {
     el('div', { class: 'body' }, body));
 }
 
+// Who is up and who is down, once the game has been ended.
+function renderStandings() {
+  const st = S.state;
+  if (!st || !st.standings) return;
+  const rows = st.standings.map((row) => el('tr', {},
+    el('td', {}, row.seat === st.you ? `${row.name} (${t('you')})` : row.name,
+       row.bot && el('span', { class: 'tag' }, t('bot.tag'))),
+    el('td', { class: 'chips' }, formatChips(row.stack)),
+    el('td', { class: row.net > 0 ? 'up' : row.net < 0 ? 'down' : '' }, (row.net > 0 ? '+' : '') + formatChips(row.net))));
+  fill($('standings'),
+    el('div', { class: 'head' },
+      el('h2', {}, t('standings.title')),
+      el('button', { class: 'quiet', type: 'button', onclick: () => $('standings').close() }, t('summary.close'))),
+    el('div', { class: 'body' },
+      el('table', { class: 'nets' },
+        el('thead', {}, el('tr', {}, el('th', {}, t('standings.player')),
+           el('th', { class: 'chips' }, t('standings.chips')), el('th', {}, t('standings.net')))),
+        el('tbody', {}, rows))),
+    el('div', { class: 'foot' },
+      el('button', { class: 'primary', type: 'button', onclick: () => send({ type: 'new_game' }) }, t('manage.new'))));
+}
+
+function showStandings() {
+  renderStandings();
+  if (!$('standings').open) $('standings').showModal();
+}
+
+// Ask before something that cannot be undone.
+function confirmThen(question, yes, then) {
+  const box = $('confirm');
+  fill(box,
+    el('p', {}, question),
+    el('div', { class: 'foot' },
+      el('button', { type: 'button', onclick: () => box.close() }, t('confirm.cancel')),
+      el('button', { class: 'primary', type: 'button', onclick: () => { box.close(); then(); } }, yes)));
+  box.showModal();
+}
+
 function notice(text) {
   $('notice').textContent = text;
   clearTimeout(S.noticeTimer);
@@ -457,6 +535,9 @@ function notice(text) {
 function tick() {
   const timer = document.querySelector('.seat.turn .timer');
   if (timer && S.turnEndsAt) timer.textContent = formatSeconds((S.turnEndsAt - Date.now()) / 1000);
+  for (const away of document.querySelectorAll('[data-away-until]')) {
+    away.textContent = t('status.away', { n: Math.max(0, Math.ceil((Number(away.dataset.awayUntil) - Date.now()) / 1000)) });
+  }
   const countdown = document.querySelector('[data-countdown]');
   if (countdown && S.nextHandAt) {
     countdown.textContent = t('start.countdown', { n: Math.max(0, Math.ceil((S.nextHandAt - Date.now()) / 1000)) });
@@ -471,6 +552,13 @@ $('join-form').addEventListener('submit', (e) => {
   if (!name) return;
   S.joinError = null;
   S.wantName = name;
+  // Sitting down by hand is a fresh start: what an earlier visit logged is gone.
+  S.log = [];
+  S.summary = null;
+  remember(sessionStorage, 'th.log', '[]');
+  remember(sessionStorage, 'th.summary', 'null');
+  renderLog();
+  renderStatic();
   $('join-error').textContent = '';
   if (S.online) sendJoin(name);   // otherwise it is sent as soon as the connection opens
 });
@@ -486,13 +574,25 @@ $('summary-button').addEventListener('click', () => {
   $('summary').showModal();
 });
 
-// Clicking the dimmed page around the dialog closes it.
-$('summary').addEventListener('click', (e) => {
-  if (e.target === $('summary')) $('summary').close();
+$('end-game').addEventListener('click', () => {
+  confirmThen(t('confirm.end'), t('manage.end'), () => send({ type: 'end_game' }));
 });
 
+// Between hands of a finished game nothing is lost by starting over: no need to ask.
+$('new-game').addEventListener('click', () => {
+  if (S.state && S.state.game_over) send({ type: 'new_game' });
+  else confirmThen(t('confirm.new'), t('manage.new'), () => send({ type: 'new_game' }));
+});
+
+// Clicking the dimmed page around a dialog closes it.
+for (const dialog of document.querySelectorAll('dialog')) {
+  dialog.addEventListener('click', (e) => {
+    if (e.target === dialog) dialog.close();
+  });
+}
+
 document.addEventListener('keydown', (e) => {
-  if (e.ctrlKey || e.metaKey || e.altKey || $('summary').open || $('game').hidden) return;
+  if (e.ctrlKey || e.metaKey || e.altKey || document.querySelector('dialog[open]') || $('game').hidden) return;
   if (e.target instanceof HTMLInputElement && e.target.type !== 'range') return;
   if (!/^[a-z]$/i.test(e.key)) return;
   const target = document.querySelector(`#actions [data-key="${e.key.toLowerCase()}"]`);

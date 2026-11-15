@@ -45,6 +45,7 @@ make                      # builds ./thserver, ./thstats, ./thbot, ./thmatch and
 ./thserver --port 4000 --turn 60 --chips 500 --next-hand 10
 ./thserver --turn 0       # no time limit
 ./thserver --next-hand 10 # optional: start the next hand by itself 10 s after the last one
+./thserver --grace 60     # a player who disconnects mid-hand has 60 s to come back (default 30, 0 = folds at once)
 ./thserver --history game.jsonl     # save hands to game.jsonl (default hands.jsonl)
 ./thserver --no-history   # do not save hands
 ./thserver --verbose      # also print every message sent and received
@@ -65,7 +66,12 @@ have chips; to play against bots, start some in another terminal (`./thbot --bot
 - "Review last hand" shows the finished hand street by street.
 - English and Chinese; the button in the top right switches, and the choice is remembered.
 - Reloading the page or losing the connection takes your seat back by itself (the page keeps
-  the token). As with any client, disconnecting during a hand folds that hand.
+  the token), and the hand log comes back with it. If that happens during a hand, your cards
+  wait for you for 30 seconds (`--grace`).
+- When everyone else at the table is a bot, two more buttons appear: **End game** stops
+  dealing and shows who is up and who is down; **Restart** puts everyone back on the starting
+  chips. Either cancels the hand in progress and gives its bets back. With a second person
+  at the table the buttons are gone: nobody can end someone else's game.
 
 How it works: the page is plain HTML, CSS and JavaScript in `web/`, no build step and no
 libraries. `thserver` serves those files itself on the web port and upgrades `/ws` to a
@@ -84,9 +90,12 @@ Client -> server
 ```jsonc
 {"type":"join","name":"Bryan"}
 {"type":"join","name":"Bryan","token":"..."}   // take your seat back after a disconnect
+{"type":"join","name":"Robo","bot":true}       // a program, not a person (thbot says so)
 {"type":"start"}
 {"type":"action","action":"fold"}          // also "check", "call"
 {"type":"action","action":"raise","amount":20}   // raise TO 20 this round
+{"type":"end_game"}   // only for a person alone with bots: stop and show the standings
+{"type":"new_game"}   // same person, or anyone once the game is over: starting chips again, hand 1 next
 ```
 
 Server -> client
@@ -95,7 +104,9 @@ Server -> client
   stage, board, pot, current bet, dealer and blinds, every seat's stack / bet / status,
   your own hole cards (everyone's still in the hand at showdown), your best hand,
   whose turn it is and seconds left, seconds until the next hand starts, and, on your turn,
-  the allowed actions with the raise range
+  the allowed actions with the raise range; also which seats are bots, `reconnect_in` for a
+  seat whose player dropped out mid-hand, `solo` (you may end or restart the game), and after
+  `end_game` `game_over` with `standings` (chips and net per player, best first)
 - `event` - a line for the game log: `text` is ready to print ("Bob raises to 20",
   "Flop: Q♥ 8♥ 4♠"); `kind` and fields such as `name`, `amount`, `allin`, `cards`, `hand`
   say the same for clients that word it themselves (the web client, in two languages)
@@ -106,9 +117,13 @@ Server -> client
 
 Rules handled by the server: turn order, check/call/raise options, minimum raise (a short
 all-in does not reopen betting), side pots, heads-up blinds, button rotation. A player who
-runs out of time checks if possible, otherwise folds. A player who disconnects folds the
-current hand and gets their seat and chips back by joining again with the same name and
-their token; without the token nobody else can take that seat. Each hand starts when a player
+runs out of time checks if possible, otherwise folds. A player who disconnects during a hand
+keeps their cards for 30 seconds (`--grace`; the turn timer still runs) and plays on if they
+are back by then, otherwise folds; a player who is all-in stays in the hand. They get their
+seat and chips back by joining again with the same name and their token; without the token
+nobody else can take that seat. A hand that is cancelled by `end_game` or `new_game` returns
+every bet and is not written to the history; after `end_game` nothing is dealt until a new
+game (a `start` from a person begins one). Each hand starts when a player
 sends `start`; with `--next-hand N` the next one starts by itself after N seconds instead.
 
 ## Hand history and stats
@@ -272,6 +287,10 @@ Tests have no external dependencies (`tests/test_framework.h`). They cover:
   never sends, a whole WebSocket connection from handshake to close, web files served and
   paths outside `web/` refused, WebSockets from other sites refused
 - the fields of `event` and `error` messages
+- coming back after a disconnect: cards kept, the hand played on, folded when the time is up,
+  all-in players left in, the turn timer still applied
+- ending and restarting a game: only for a person alone with bots, the hand cancelled with
+  every chip returned and nothing written to the history, standings, nothing dealt after the end
 - the web client (`web/tests`, run by Node): seat and chip positions, raise sizes, the
   last-hand review, every string present in both languages with the same placeholders
 - full hands driven through `table::on_message` with a fake clock: state reaching every

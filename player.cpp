@@ -22,6 +22,7 @@ void player::reset_for_hand(){
   cards[0] = nullptr;
   cards[1] = nullptr;
   score = 0;
+  away_until = 0;
   reset_for_round();
 }
 

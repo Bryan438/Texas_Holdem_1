@@ -137,6 +137,11 @@ test('events are worded in either language', () => {
   assert.equal(text('zh', { kind: 'joined', name: 'Al', next_hand: true }), 'Al 入座（下一手开始参与）');
   assert.equal(text('zh', { kind: 'fold', name: 'Al', reason: 'disconnected' }), 'Al 弃牌（掉线）');
   assert.equal(text('en', { kind: 'check', name: 'Al', reason: 'timeout' }), 'Al checks (out of time)');
+  assert.equal(text('zh', { kind: 'disconnected', name: 'Al', grace: 30 }), 'Al 掉线了，30 秒内回来可以继续这一手');
+  assert.equal(text('en', { kind: 'disconnected', name: 'Al' }), 'Al disconnected');
+  assert.equal(text('zh', { kind: 'game_over', name: 'Al' }), 'Al 结束了牌局');
+  assert.equal(text('en', { kind: 'new_game', name: 'Al', amount: 200 }), 'Al started a new game: everyone has 200 chips');
+  assert.equal(text('zh', { kind: 'hand_cancelled', hand: 4 }), '第 4 手作废，下注已退回');
   // A kind this page has never heard of: show the server's own line.
   assert.equal(eventKey({ kind: 'rabbit_hunt' }), null);
   assert.equal(text('zh', { kind: 'rabbit_hunt', text: 'Bob peeks' }), 'Bob peeks');
@@ -154,4 +159,5 @@ test('hand names and errors', () => {
   assert.equal(errorText('zh', { code: 'bad_action', message: 'raise must be to between 4 and 60' }),
                'raise must be to between 4 and 60');
   assert.equal(errorText('en', { message: 'something else' }), 'something else');
+  assert.equal(errorText('zh', { code: 'not_alone', message: 'x' }), '只有桌上除了你都是机器人时才能这样做。');
 });
