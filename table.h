@@ -54,8 +54,10 @@ struct hand_result_entry{
 //   {"type":"welcome","seat":0,"name":"Bryan","token":"..."}
 //     keep the token: it is needed to take the seat back after a disconnect
 //   {"type":"state", ...}   full table as this player may see it, after every change
-//   {"type":"event","text":"Bob raises to 20"}
-//   {"type":"error","message":"..."}
+//   {"type":"event","text":"Bob raises to 20","kind":"raise","name":"Bob","amount":20,"allin":false}
+//     text is ready to print; the other fields say the same for clients that
+//     word the line themselves (the web client, in two languages)
+//   {"type":"error","message":"...","code":"not_your_turn"}
 //   {"type":"hand_summary", ...}  the hand that just ended, as this player may see it
 class table: public observer{
   public:
@@ -144,9 +146,9 @@ class table: public observer{
     // Output
     json state_for(int viewer) const;
     void broadcast_state();
-    void event(const std::string& text);
+    void event(const std::string& text, json data = json());
     void send(int client, const json& msg);
-    void send_error(int client, const std::string& message);
+    void send_error(int client, const std::string& message, const std::string& code);
 };
 
 #endif

@@ -3,7 +3,7 @@ CXXFLAGS = -std=c++17 -Wall -g -O2 -pthread
 
 # The game itself; the server adds the network (transport.cpp) on top.
 CORE = card.cpp deck_of_card.cpp player.cpp table.cpp hand_evaluator.cpp pot_calculator.cpp
-SRCS = $(CORE) transport.cpp
+SRCS = $(CORE) transport.cpp websocket.cpp
 OBJS = $(SRCS:.cpp=.o)
 HEADERS = $(wildcard *.h)
 
@@ -50,7 +50,11 @@ tests/run_tests: $(TEST_SRCS) $(TESTED) $(HEADERS) tests/test_framework.h third_
 test: tests/run_tests
 	./tests/run_tests
 
+# The web client's logic and translations. Needs Node 18 or newer, nothing else.
+test-web:
+	node --test web/tests/*.test.js
+
 clean:
 	rm -f *.o thserver thstats thbot thmatch thenv tests/run_tests
 
-.PHONY: all test clean
+.PHONY: all test test-web clean
