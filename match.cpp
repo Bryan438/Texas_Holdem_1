@@ -1,30 +1,9 @@
 #include <algorithm>
 #include <cmath>
-#include <map>
 #include "match.h"
 #include "table.h"
 
-namespace {
-
-// Keeps the last state message each client was sent, unparsed: only the
-// player to act needs theirs parsed.
-class capture_sender: public sender{
-  public:
-    std::map<int, std::string> last_state;
-    int errors = 0;
-    void send_line(int client, const std::string& line) override{
-      if(line.find("\"type\":\"state\"") != std::string::npos){
-        last_state[client] = line;
-      }
-      else if(line.find("\"type\":\"error\"") != std::string::npos){
-        errors++;
-      }
-    }
-};
-
-int client_of(int seat){ return 1000 + seat; }
-
-}  // namespace
+static int client_of(int seat){ return 1000 + seat; }
 
 match_result run_match(const std::vector<bot_style>& styles, const match_options& options){
   match_result result;

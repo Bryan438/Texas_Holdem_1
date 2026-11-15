@@ -37,7 +37,7 @@ flowchart TD
 
 ## Build & Run
 ```bash
-make                      # builds ./thserver, ./thstats, ./thbot and ./thmatch
+make                      # builds ./thserver, ./thstats, ./thbot, ./thmatch and ./thenv
 ./thserver                # port 4000, 5 min per turn, 200 chips, blinds 1/2; type s to start each hand
 ./thserver --port 4000 --turn 60 --chips 500 --next-hand 10
 ./thserver --turn 0       # no time limit
@@ -108,7 +108,8 @@ what a person in its seat would see, no more. The server does not need to know a
 ./thbot                                   # one bot named Robo joins 127.0.0.1:4000
 ./thbot 192.168.1.20 4000 --bots 3        # Robo1, Robo2, Robo3
 ./thbot --name Station --style calling --delay 0.5
-./thbot --style rules                     # default style: equity (the strongest)
+./thbot --style rules                     # default style: equity
+./thbot --style rl                        # the learned bot (see below)
 ./thbot --bots 3 --start                  # bots-only table: a bot starts each hand
 ```
 By default a bot never starts a hand, so a person still types `s`. With `--start`, the
@@ -137,6 +138,9 @@ Styles (`bot.cpp`):
     pass (rank counts and suit bit masks) instead of trying all 21 five-card hands. It is 13x
     faster and the tests check it gives the same score as `evaluate_best`.
 
+- `rl` - a small neural network that learned by playing the four styles above; nobody wrote
+  its rules. See [A bot that learns](#a-bot-that-learns).
+
 ### How strong is each bot?
 `thmatch` seats bots on a real table in one process (no network) and plays many hands.
 Every bot starts every hand at 100 big blinds, so nobody busts and each hand counts the same.
@@ -162,6 +166,65 @@ bots +336 and +263; `random` lost 489 and `calling` 1264. Against `rules` the ma
 both play tight and both mostly bet good hands, so the next step would be bots that adapt to
 how each opponent plays (or learn it, see the hand history).
 
+### A bot that learns
+The `rl` style was trained with reinforcement learning (PPO): it played millions of
+decisions against the other styles and was nudged towards the choices that won chips.
+
+- **What it sees** (`rl_policy.cpp`): 37 numbers describing the spot. Its chance of winning
+  against any hand and against a bettor's likely hands (the same simulation the equity bot
+  uses), the price of calling, pot and stack sizes, position, its hole cards, what they make
+  with the board, and the board's texture. Like every bot it only knows what a person in
+  its seat would know.
+- **What it can do**: fold, check or call, bet or raise half the pot, bet or raise the pot,
+  or go all in. Moves that make no sense in a spot (folding when checking is free) are not
+  offered.
+- **The network**: two hidden layers of 64 neurons. It scores the five moves and picks one
+  at random in proportion, so it does not always play the same hand the same way.
+- **Training** (`rl/train.py`, adapted from [CleanRL](https://github.com/vwxyzjn/cleanrl)'s
+  `ppo.py`, MIT): `thenv` runs real tables with the learner in seat 0 and the other styles
+  in the rest, and talks to the Python trainer over a pipe. The reward is the big blinds won
+  when a hand ends. The built-in network took 6 million decisions in two runs (below),
+  about fifteen minutes on a laptop.
+- **Playing**: the trained network is built into `thbot` and `thmatch`
+  (`rl_model_data.cpp`); C++ runs it directly, so playing needs no Python.
+
+```bash
+cd rl
+python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+# Run 1: every style, tables of 2 to 6 players -> models/rl.txt and models/rl.pt
+.venv/bin/python train.py --opponents equity:5,rules:2,calling:2,random:1 --players 2,2,2,2,3,3,4,6
+../thmatch --model models/rl.txt --hands 20000 rl equity  # how good is it so far?
+# Run 2: train on, mostly against equity, then build the result into thbot and thmatch
+.venv/bin/python train.py --start-from models/rl.pt --learning-rate 2e-4 --embed \
+    --opponents equity:14,rules:4,calling:1,random:1 --players 2,2,2,2,2,3,4,6
+cd .. && make
+```
+`train.py --help` lists the options: which styles to train against and how often
+(`--opponents equity:14,rules:4,calling:1,random:1`), table sizes (`--players 2,2,3,6`),
+and the PPO settings.
+
+Heads-up results of the built-in network (bb/100, 95% confidence interval):
+
+| Match | Hands | bb/100 for rl |
+|---|---|---|
+| rl vs equity | 50,000 | +44.3 ± 8.2 (seed 2: +44.8 ± 8.4) |
+| rl vs rules | 30,000 | +44.1 ± 7.1 |
+| rl vs calling | 10,000 | +2293.9 ± 123.8 |
+| rl vs random | 10,000 | +784.3 ± 74.6 |
+
+Four players (rl, equity, rules, calling; 10,000 hands): rl +2089, equity +332, rules +140,
+calling -2561.
+
+What these numbers do and do not say. The network learned to beat *these four bots*, and it
+found their habits: `equity` and `rules` fold too often to bets, so it bets a lot (heads-up
+it plays 80% of hands and raises 65% before the flop), and `calling` never folds, so it puts
+all its chips in with good hands. The mix of opponents matters: trained on a mix with many
+weak opponents it crushed them but only broke even with `equity` (-8 ± 19); trained on
+`equity` alone it lost to `calling`. It has not been measured against people, it does not
+remember how an opponent played earlier hands, and a player who sees through its betting
+could beat it. Natural next steps: train it against earlier versions of itself, and give
+it each opponent's statistics from the hand history.
+
 ## Test
 ```bash
 make test       # builds and runs tests/run_tests with AddressSanitizer + UBSan
@@ -181,6 +244,10 @@ Tests have no external dependencies (`tests/test_framework.h`). They cover:
 - bots: card codes, Chen scores, hand reading (made hands, draws and outs), the moves the
   rules and equity bots pick in set spots, raises kept inside the allowed range, whole matches
   where every move must be legal and every hand add up, same seed same result, and both bots
+  beating the baselines
+- the learned bot: the numbers it sees in set spots, only sensible moves offered, every choice
+  turned into a legal move, model files read and bad ones refused with a reason, training
+  tables that play legal hands and repeat with the same seed, and the built-in network
   beating the baselines
 - equity: known all-in odds (AA 85%, 72o 35%), split pots and kickers, the nuts, opponent
   ranges, the preflop table, and `evaluate_fast` agreeing with `evaluate_best` on 100,000

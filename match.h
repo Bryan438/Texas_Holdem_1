@@ -1,9 +1,11 @@
 #ifndef _MATCH_H_
 #define _MATCH_H_
 
+#include <map>
 #include <string>
 #include <vector>
 #include "bot.h"
+#include "observer.h"
 
 // Bots playing each other on a real table, in one process with no network:
 // each bot gets the same state messages a networked player would get.
@@ -27,6 +29,23 @@ struct match_result{
   int big_blind = 2;
   int illegal_moves = 0;      // moves the table rejected (should be 0)
   std::vector<json> records;  // every hand, as in the history file
+};
+
+// A table's output when nobody is on a network: keeps the last state message
+// each client was sent, unparsed (only the player to act needs theirs parsed),
+// and counts the errors.
+class capture_sender: public sender{
+  public:
+    std::map<int, std::string> last_state;
+    int errors = 0;
+    void send_line(int client, const std::string& line) override{
+      if(line.find("\"type\":\"state\"") != std::string::npos){
+        last_state[client] = line;
+      }
+      else if(line.find("\"type\":\"error\"") != std::string::npos){
+        errors++;
+      }
+    }
 };
 
 match_result run_match(const std::vector<bot_style>& styles, const match_options& options);

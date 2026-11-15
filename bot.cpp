@@ -4,12 +4,14 @@
 #include "bot.h"
 #include "equity.h"
 #include "hand_evaluator.h"
+#include "rl_policy.h"
 
 bool parse_bot_style(const std::string& name, bot_style& out){
   if(name == "random") out = bot_style::RANDOM;
   else if(name == "calling") out = bot_style::CALLING;
   else if(name == "rules") out = bot_style::RULES;
   else if(name == "equity") out = bot_style::EQUITY;
+  else if(name == "rl") out = bot_style::RL;
   else return false;
   return true;
 }
@@ -20,12 +22,13 @@ const char* bot_style_name(bot_style style){
     case bot_style::CALLING: return "calling";
     case bot_style::RULES: return "rules";
     case bot_style::EQUITY: return "equity";
+    case bot_style::RL: return "rl";
   }
   return "?";
 }
 
 const char* bot_style_list(){
-  return "random, calling, rules, equity";
+  return "random, calling, rules, equity, rl";
 }
 
 json bot_move::to_message() const{
@@ -189,42 +192,34 @@ hand_read read_hand(const std::vector<Card>& hole, const std::vector<Card>& boar
 
 // ---------------------------------------------------------------- decisions
 
-namespace {
-
-// The parts of a state message a bot decides from.
-struct view{
-  std::string stage;
-  int pot = 0;
-  int current_bet = 0;
-  int big_blind = 2;
-  int to_call = 0;         // chips needed to call (0: can check)
-  bool can_check = false;
-  bool can_raise = false;
-  int raise_min = 0, raise_max = 0;
-  int opponents = 0;       // others still in the hand
-  std::vector<Card> hole, board;
-};
-
-view read_view(const json& st){
-  view v;
+bot_view read_bot_view(const json& st){
+  bot_view v;
   v.stage = st.value("stage", "");
   v.pot = st.value("pot", 0);
   v.current_bet = st.value("current_bet", 0);
   if(st.contains("blinds") && st["blinds"].size() == 2){
     v.big_blind = st["blinds"][1].get<int>();
   }
-  const json& actions = st["actions"];
-  v.can_check = actions.value("check", false);
-  v.to_call = actions.value("call", 0);
-  if(actions.contains("raise") && actions["raise"].is_object()){
-    v.can_raise = true;
-    v.raise_min = actions["raise"]["min"].get<int>();
-    v.raise_max = actions["raise"]["max"].get<int>();
+  if(st.contains("actions") && st["actions"].is_object()){
+    const json& actions = st["actions"];
+    v.can_check = actions.value("check", false);
+    v.to_call = actions.value("call", 0);
+    if(actions.contains("raise") && actions["raise"].is_object()){
+      v.can_raise = true;
+      v.raise_min = actions["raise"]["min"].get<int>();
+      v.raise_max = actions["raise"]["max"].get<int>();
+    }
   }
   int you = st.value("you", -1);
+  v.on_button = you >= 0 && st.value("dealer", -1) == you;
+  v.small_blind = you >= 0 && st.value("small_blind", -1) == you;
+  v.is_big_blind = you >= 0 && st.value("big_blind", -1) == you;
   for(const json& s : st.value("seats", json::array())){
     std::string status = s.value("status", "");
     if(s.value("seat", -1) == you){
+      v.stack = s.value("stack", 0);
+      v.round_bet = s.value("bet", 0);
+      v.total_bet = s.value("total_bet", 0);
       if(s.contains("cards") && s["cards"].is_array()){
         for(const json& code : s["cards"]){
           Card c;
@@ -234,6 +229,8 @@ view read_view(const json& st){
     }
     else if(status == "active" || status == "allin"){
       v.opponents++;
+      v.opponents_all_in += status == "allin";
+      v.opponent_stack = std::max(v.opponent_stack, s.value("stack", 0));
     }
   }
   for(const json& code : st.value("board", json::array())){
@@ -243,20 +240,23 @@ view read_view(const json& st){
   return v;
 }
 
-bot_move fold(){ return {"fold", 0}; }
-bot_move check_or_call(const view& v){ return v.can_check ? bot_move{"check", 0} : bot_move{"call", 0}; }
-bot_move check_or_fold(const view& v){ return v.can_check ? bot_move{"check", 0} : fold(); }
+bot_move check_or_call(const bot_view& v){ return v.can_check ? bot_move{"check", 0} : bot_move{"call", 0}; }
+bot_move check_or_fold(const bot_view& v){ return v.can_check ? bot_move{"check", 0} : bot_move{"fold", 0}; }
 
 // Raise to `to`, kept inside the allowed range (the top of it is all in).
-bot_move raise_to(const view& v, int to){
+bot_move raise_to(const bot_view& v, int to){
   if(!v.can_raise){
     return check_or_call(v);
   }
   return {"raise", std::max(v.raise_min, std::min(to, v.raise_max))};
 }
 
+namespace {
+
+bot_move fold(){ return {"fold", 0}; }
+
 // Bet or raise by `chips` on top of the current bet.
-bot_move bet(const view& v, int chips){
+bot_move bet(const bot_view& v, int chips){
   return raise_to(v, v.current_bet + std::max(chips, v.big_blind));
 }
 
@@ -264,7 +264,7 @@ bool chance(std::mt19937& rng, int percent){
   return (int)(rng() % 100) < percent;
 }
 
-bot_move decide_random(const view& v, std::mt19937& rng){
+bot_move decide_random(const bot_view& v, std::mt19937& rng){
   int roll = rng() % 10;
   if(!v.can_check && roll < 3){
     return fold();
@@ -279,7 +279,7 @@ bot_move decide_random(const view& v, std::mt19937& rng){
   return check_or_call(v);
 }
 
-bot_move decide_preflop(const view& v){
+bot_move decide_preflop(const bot_view& v){
   int chen = chen_score(v.hole[0], v.hole[1]);
   int bb = v.big_blind;
   bool unraised = v.current_bet <= bb;
@@ -303,7 +303,7 @@ bot_move decide_preflop(const view& v){
   return check_or_fold(v);
 }
 
-bot_move decide_postflop(const view& v, std::mt19937& rng){
+bot_move decide_postflop(const bot_view& v, std::mt19937& rng){
   hand_read hand = read_hand(v.hole, v.board);
   // The share of the final pot a call costs: calling is worth it when the
   // chance of winning is at least this.
@@ -334,7 +334,7 @@ bot_move decide_postflop(const view& v, std::mt19937& rng){
   return check_or_fold(v);
 }
 
-bot_move decide_equity(const view& v, std::mt19937& rng){
+bot_move decide_equity(const bot_view& v, std::mt19937& rng){
   int opponents = std::max(1, v.opponents);
   // Facing a bet after the flop, assume the bettor holds something, and
   // something good when the bet is half the pot or more.
@@ -380,7 +380,7 @@ bot_move decide(const json& state, bot_style style, std::mt19937& rng){
   if(!state.contains("actions") || !state["actions"].is_object()){
     return {"check", 0};
   }
-  view v = read_view(state);
+  bot_view v = read_bot_view(state);
   switch(style){
     case bot_style::RANDOM:
       return decide_random(v, rng);
@@ -393,6 +393,11 @@ bot_move decide(const json& state, bot_style style, std::mt19937& rng){
     case bot_style::EQUITY:
       if(v.hole.size() != 2) return check_or_fold(v);
       return decide_equity(v, rng);
+    case bot_style::RL:{
+      const rl_model* model = rl_current_model();
+      if(v.hole.size() != 2 || model == nullptr) return check_or_fold(v);
+      return rl_move(v, rl_choose(*model, rl_observe(v, rng), rng));
+    }
   }
   return check_or_fold(v);
 }
