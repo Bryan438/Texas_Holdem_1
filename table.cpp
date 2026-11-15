@@ -84,6 +84,12 @@ void table::on_message(int client, const std::string& line){
   else if(type == "action"){
     handle_action(client, msg);
   }
+  else if(type == "end_game"){
+    handle_end_game(client);
+  }
+  else if(type == "new_game"){
+    handle_new_game(client);
+  }
   else{
     send_error(client, "unknown message type: " + type, "bad_message");
   }
@@ -97,18 +103,44 @@ void table::on_disconnect(int client){
   player& p = *seats[s];
   p.connected = false;
   p.socket = -1;
-  event(p.name + " disconnected", {{"kind", "disconnected"}, {"name", p.name}});
+  bool playing = current_stage != WAITING && p.in_hand;
 
-  if(current_stage != WAITING && p.in_hand){
-    fold_seat(s);
-    record_action(s, "fold", 0, 0, "disconnected");
-    event(p.name + " folds (disconnected)", {{"kind", "fold"}, {"name", p.name}, {"reason", "disconnected"}});
-    if(turn == s || count_in_hand() <= 1){
-      continue_hand(s);
-      return;
+  // A reloaded page or a network hiccup should not cost the hand: keep the
+  // cards for a while. A player who is all-in has nothing left to decide and
+  // simply stays in.
+  if(playing && config.disconnect_grace_seconds > 0){
+    if(p.all_in){
+      event(p.name + " disconnected", {{"kind", "disconnected"}, {"name", p.name}});
     }
+    else{
+      p.away_until = now_ms() + config.disconnect_grace_seconds * 1000LL;
+      event(p.name + " disconnected (" + std::to_string(config.disconnect_grace_seconds) + " s to come back)",
+            {{"kind", "disconnected"}, {"name", p.name}, {"grace", config.disconnect_grace_seconds}});
+    }
+    broadcast_state();
+    return;
+  }
+
+  event(p.name + " disconnected", {{"kind", "disconnected"}, {"name", p.name}});
+  if(playing && fold_absent(s)){
+    return;
   }
   broadcast_state();
+}
+
+// Fold a player who is gone. True when that passed the turn on or ended the
+// hand, in which case everyone has already been sent the new state.
+bool table::fold_absent(int s){
+  player& p = *seats[s];
+  p.away_until = 0;
+  fold_seat(s);
+  record_action(s, "fold", 0, 0, "disconnected");
+  event(p.name + " folds (disconnected)", {{"kind", "fold"}, {"name", p.name}, {"reason", "disconnected"}});
+  if(turn == s || count_in_hand() <= 1){
+    continue_hand(s);
+    return true;
+  }
+  return false;
 }
 
 void table::handle_join(int client, const json& msg){
@@ -145,6 +177,7 @@ void table::handle_join(int client, const json& msg){
       }
       seats[i]->socket = client;
       seats[i]->connected = true;
+      seats[i]->away_until = 0;   // back in time: the hand goes on with their cards
       send(client, {{"type", "welcome"}, {"seat", (int)i}, {"name", name}, {"token", token}});
       event(name + " reconnected", {{"kind", "reconnected"}, {"name", name}});
       broadcast_state();
@@ -175,6 +208,8 @@ void table::handle_join(int client, const json& msg){
   p.socket = client;
   p.name = name;
   p.stack = config.starting_stack;
+  p.buy_in = config.starting_stack;
+  p.bot = msg.contains("bot") && msg["bot"].is_boolean() && msg["bot"].get<bool>();
   p.token = make_token();
   send(client, {{"type", "welcome"}, {"seat", s}, {"name", name}, {"token", p.token}});
   event(name + " joined" + (current_stage == WAITING ? "" : " (plays from the next hand)"),
@@ -183,6 +218,17 @@ void table::handle_join(int client, const json& msg){
 }
 
 void table::handle_start(int client){
+  if(game_over){
+    // Dealing again after the game ended begins a new one, so that a client
+    // that only knows "start" is never stuck. Bots do not decide that.
+    const player& p = *seats[seat_of(client)];
+    if(p.bot){
+      send_error(client, "the game is over: a player starts a new one", "game_over");
+      return;
+    }
+    reset_game(p.name);
+    broadcast_state();
+  }
   if(current_stage != WAITING){
     send_error(client, "a hand is already running", "hand_running");
     return;
@@ -190,6 +236,114 @@ void table::handle_start(int client){
   if(!start_hand()){
     send_error(client, "need at least 2 connected players with chips", "not_enough_players");
   }
+}
+
+// Is this seat a person, with no other person connected? Then the game is
+// theirs to end or restart: nobody else is affected.
+bool table::alone_with_bots(int s) const{
+  if(s < 0 || s >= (int)seats.size() || seats[s]->bot || !seats[s]->connected){
+    return false;
+  }
+  for(int i = 0; i < (int)seats.size(); i++){
+    if(i != s && seats[i]->connected && !seats[i]->bot){
+      return false;
+    }
+  }
+  return true;
+}
+
+void table::handle_end_game(int client){
+  int s = seat_of(client);
+  if(game_over){
+    send_error(client, "the game is already over", "game_over");
+    return;
+  }
+  if(!alone_with_bots(s)){
+    send_error(client, "only a player alone with bots can end the game", "not_alone");
+    return;
+  }
+  if(current_stage != WAITING){
+    cancel_hand();
+  }
+  game_over = true;
+  next_hand_at = 0;
+  event(seats[s]->name + " ended the game", {{"kind", "game_over"}, {"name", seats[s]->name}});
+  broadcast_state();
+}
+
+void table::handle_new_game(int client){
+  int s = seat_of(client);
+  // Once the game is over anyone (but a bot) may begin the next one; while it
+  // is running only a player alone with bots may throw it away.
+  if(seats[s]->bot || (!game_over && !alone_with_bots(s))){
+    send_error(client, "only a player alone with bots can restart the game", "not_alone");
+    return;
+  }
+  reset_game(seats[s]->name);
+  broadcast_state();
+}
+
+// Stop the hand in progress as if it had not been dealt: every chip goes
+// back to the player who put it in, and nothing is written to the history.
+void table::cancel_hand(){
+  for(auto& p : seats){
+    p->stack += p->total_bet;
+    p->reset_for_hand();
+  }
+  for(int i = 0; i < 5; i++){
+    board[i] = nullptr;
+  }
+  board_count = 0;
+  current_stage = WAITING;
+  turn = -1;
+  current_bet = 0;
+  next_hand_at = 0;
+  reveal_cards = false;
+  last_result.clear();
+  record = json();
+  event("Hand #" + std::to_string(hand_count) + " cancelled, bets returned",
+        {{"kind", "hand_cancelled"}, {"hand", hand_count}});
+}
+
+// A fresh game: everyone back to the starting chips, the next hand is #1.
+void table::reset_game(const std::string& by){
+  if(current_stage != WAITING){
+    cancel_hand();
+  }
+  for(auto& p : seats){
+    p->reset_for_hand();
+    p->stack = config.starting_stack;
+    p->buy_in = config.starting_stack;
+  }
+  for(int i = 0; i < 5; i++){
+    board[i] = nullptr;
+  }
+  board_count = 0;
+  hand_count = 0;
+  dealer = -1;
+  next_hand_at = 0;
+  reveal_cards = false;
+  game_over = false;
+  last_result.clear();
+  event(by + " started a new game: everyone has " + std::to_string(config.starting_stack) + " chips",
+        {{"kind", "new_game"}, {"name", by}, {"amount", config.starting_stack}});
+}
+
+// Who is up and who is down since the game began, best first.
+json table::standings() const{
+  std::vector<int> order(seats.size());
+  for(size_t i = 0; i < order.size(); i++){
+    order[i] = i;
+  }
+  std::stable_sort(order.begin(), order.end(), [this](int a, int b){
+    return seats[a]->stack - seats[a]->buy_in > seats[b]->stack - seats[b]->buy_in;
+  });
+  json list = json::array();
+  for(int i : order){
+    const player& p = *seats[i];
+    list.push_back({{"seat", i}, {"name", p.name}, {"bot", p.bot}, {"stack", p.stack}, {"net", p.stack - p.buy_in}});
+  }
+  return list;
 }
 
 void table::handle_action(int client, const json& msg){
@@ -215,6 +369,23 @@ void table::handle_action(int client, const json& msg){
 }
 
 void table::tick(){
+  // Players who disconnected during this hand and did not come back in time.
+  if(current_stage != WAITING){
+    for(size_t i = 0; i < seats.size(); i++){
+      player& p = *seats[i];
+      if(p.away_until == 0 || now_ms() < p.away_until){
+        continue;
+      }
+      p.away_until = 0;
+      if(!p.in_hand || p.connected){
+        continue;   // folded on the turn timer meanwhile
+      }
+      if(fold_absent(i)){
+        return;     // the turn moved on or the hand ended: the rest waits for the next tick
+      }
+      broadcast_state();
+    }
+  }
   if(current_stage == WAITING){
     if(next_hand_at > 0 && now_ms() >= next_hand_at){
       next_hand_at = 0;
@@ -503,6 +674,7 @@ void table::finish_hand(){
 
   for(auto& p : seats){
     p->reset_for_round();   // no bets left on the table between hands
+    p->away_until = 0;      // nothing left to come back to
   }
   reveal_cards = showdown;
   current_stage = WAITING;
@@ -639,6 +811,11 @@ json table::state_for(int viewer) const{
   st["big_blind"] = current_stage == WAITING ? -1 : big_blind_seat;
   st["turn"] = turn;
   st["blinds"] = {config.small_blind, config.big_blind};
+  st["game_over"] = game_over;
+  st["solo"] = alone_with_bots(viewer);   // may this player end or restart the game?
+  if(game_over){
+    st["standings"] = standings();
+  }
   if(current_stage == WAITING && next_hand_at > 0){
     st["next_hand_in"] = std::max<int64_t>(0, (next_hand_at - now_ms() + 999) / 1000);
   }
@@ -674,7 +851,11 @@ json table::state_for(int viewer) const{
     }
 
     json s = {{"seat", (int)i}, {"name", p.name}, {"stack", p.stack}, {"bet", p.round_bet},
-              {"total_bet", p.total_bet}, {"status", status}};
+              {"total_bet", p.total_bet}, {"status", status}, {"bot", p.bot}};
+    if(p.away_until > 0){
+      // disconnected but still holding cards: seconds left to come back
+      s["reconnect_in"] = std::max<int64_t>(0, (p.away_until - now_ms() + 999) / 1000);
+    }
     bool show = p.cards[0] != nullptr && ((int)i == viewer || (reveal_cards && p.in_hand));
     if(show){
       s["cards"] = {p.cards[0]->code(), p.cards[1]->code()};

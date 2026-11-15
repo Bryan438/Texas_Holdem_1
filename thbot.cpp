@@ -105,7 +105,7 @@ static std::string describe(const bot_move& move, const json& state){
 // One connection, until it drops. Returns false if the server turned the bot
 // away (a name that is taken, a full table): trying again would not help.
 static bool play(const bot_config& cfg, int sock, std::string& token, std::mt19937& rng){
-  json join = {{"type", "join"}, {"name", cfg.name}};
+  json join = {{"type", "join"}, {"name", cfg.name}, {"bot", true}};
   if(!token.empty()) join["token"] = token;
   if(!send_line(sock, join)) return true;
 

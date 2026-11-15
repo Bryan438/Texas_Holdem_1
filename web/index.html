@@ -10,6 +10,11 @@
   <header class="bar">
     <h1 id="title"></h1>
     <span id="meta" class="meta"></span>
+    <!-- Only while every other player is a bot -->
+    <span id="manage" class="manage" hidden>
+      <button id="end-game" class="quiet" type="button"></button>
+      <button id="new-game" class="quiet" type="button"></button>
+    </span>
     <span id="conn" class="conn" role="status"></span>
     <button id="lang" class="quiet" type="button"></button>
   </header>
@@ -50,6 +55,8 @@
   </main>
 
   <dialog id="summary" class="summary"></dialog>
+  <dialog id="standings" class="summary"></dialog>
+  <dialog id="confirm" class="summary confirm"></dialog>
 
   <noscript>This page needs JavaScript to play.</noscript>
   <script type="module" src="app.js"></script>

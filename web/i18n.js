@@ -35,6 +35,20 @@ const STRINGS = {
     'status.sitting_out': 'Plays next hand',
     'status.disconnected': 'Disconnected',
     'status.busted': 'Out of chips',
+    'manage.end': 'End game',
+    'manage.new': 'Restart',
+    'confirm.end': 'End the game and see who is up? The hand in progress is cancelled and its bets go back.',
+    'confirm.new': 'Start over? Everyone goes back to the starting chips, and the hand in progress is cancelled.',
+    'confirm.cancel': 'Keep playing',
+    'over.title': 'Game over',
+    'over.line': 'This game is over.',
+    'over.show': 'Show results',
+    'standings.title': 'Results',
+    'standings.player': 'Player',
+    'standings.chips': 'Chips',
+    'standings.net': 'Won or lost',
+    'bot.tag': 'bot',
+    'status.away': 'Away · {n} s to return',
     'action.fold': 'Fold',
     'action.check': 'Check',
     'action.call': 'Call {n}',
@@ -81,7 +95,11 @@ const STRINGS = {
     'hand.Four of a kind': 'Four of a kind',
     'hand.Straight flush': 'Straight flush',
     'event.disconnected': '{name} disconnected',
+    'event.disconnected.grace': '{name} disconnected ({grace} s to come back)',
     'event.reconnected': '{name} reconnected',
+    'event.game_over': '{name} ended the game',
+    'event.new_game': '{name} started a new game: everyone has {amount} chips',
+    'event.hand_cancelled': 'Hand #{hand} cancelled, bets returned',
     'event.joined': '{name} joined',
     'event.joined.next': '{name} joined (plays from the next hand)',
     'event.not_enough_players': 'Not enough players with chips. Waiting for someone to join.',
@@ -117,6 +135,8 @@ const STRINGS = {
     'error.not_your_turn': 'It is not your turn.',
     'error.already_seated': 'You are already seated.',
     'error.join_first': 'Sit down first.',
+    'error.not_alone': 'Only possible while you are the only person at the table.',
+    'error.game_over': 'This game is over. Start a new one.',
   },
   zh: {
     'title': '德州扑克',
@@ -149,6 +169,20 @@ const STRINGS = {
     'status.sitting_out': '下一手参与',
     'status.disconnected': '已掉线',
     'status.busted': '没有筹码',
+    'manage.end': '结束牌局',
+    'manage.new': '重新开始',
+    'confirm.end': '结束这一场并查看战绩？正在打的这一手会作废，下注退回。',
+    'confirm.new': '重新开始？所有人的筹码恢复到起始数量，正在打的这一手会作废。',
+    'confirm.cancel': '继续打',
+    'over.title': '牌局结束',
+    'over.line': '这一场已经结束。',
+    'over.show': '查看战绩',
+    'standings.title': '战绩',
+    'standings.player': '玩家',
+    'standings.chips': '筹码',
+    'standings.net': '输赢',
+    'bot.tag': '机器人',
+    'status.away': '掉线 · {n} 秒内可回来',
     'action.fold': '弃牌',
     'action.check': '过牌',
     'action.call': '跟注 {n}',
@@ -195,7 +229,11 @@ const STRINGS = {
     'hand.Four of a kind': '四条',
     'hand.Straight flush': '同花顺',
     'event.disconnected': '{name} 掉线了',
+    'event.disconnected.grace': '{name} 掉线了，{grace} 秒内回来可以继续这一手',
     'event.reconnected': '{name} 重新连上了',
+    'event.game_over': '{name} 结束了牌局',
+    'event.new_game': '{name} 重新开始了牌局：每人 {amount} 筹码',
+    'event.hand_cancelled': '第 {hand} 手作废，下注已退回',
     'event.joined': '{name} 入座',
     'event.joined.next': '{name} 入座（下一手开始参与）',
     'event.not_enough_players': '有筹码的玩家不够，等待有人加入。',
@@ -231,6 +269,8 @@ const STRINGS = {
     'error.not_your_turn': '还没轮到你。',
     'error.already_seated': '你已经入座了。',
     'error.join_first': '请先入座。',
+    'error.not_alone': '只有桌上除了你都是机器人时才能这样做。',
+    'error.game_over': '这一场已经结束，请重新开始。',
   },
 };
 
@@ -256,6 +296,7 @@ export function eventKey(event) {
   if (!event || typeof event.kind !== 'string') return null;
   let key = 'event.' + event.kind;
   if (event.kind === 'joined' && event.next_hand) key += '.next';
+  else if (event.kind === 'disconnected' && event.grace) key += '.grace';
   else if (event.kind === 'win' && event.hand) key += '.hand';
   else if ((event.kind === 'fold' || event.kind === 'check') && event.reason) key += '.' + event.reason;
   else if (['call', 'bet', 'raise'].includes(event.kind) && event.allin) key += '.allin';
@@ -269,10 +310,11 @@ export function eventKey(event) {
 export function eventPieces(lang, event) {
   const key = eventKey(event);
   if (!key) return [String((event && event.text) || '')];
+  // "hand" is a hand's number in some events and the name of a made hand in others.
   const text = translate(lang, key, {
-    name: event.name,
-    amount: event.amount,
-    hand: 'hand' in event ? (event.kind === 'hand_start' ? event.hand : handName(lang, event.hand)) : undefined,
+    ...event,
+    cards: '{cards}',   // left in place: the cards are drawn, not written
+    hand: typeof event.hand === 'number' ? event.hand : handName(lang, event.hand),
   });
   const pieces = [];
   for (const part of text.split('{cards}')) {

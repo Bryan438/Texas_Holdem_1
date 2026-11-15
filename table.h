@@ -23,6 +23,8 @@ struct table_config{
   int turn_seconds = 300;  // 5 minutes; 0 = no time limit
   int next_hand_seconds = 0; // 0 = a player starts each hand with "start";
                              // N = start the next hand by itself after N seconds
+  int disconnect_grace_seconds = 30; // a player who disconnects during a hand keeps their
+                                     // cards this long before folding (0 = folds at once)
   bool log_events = true;  // print events on the server console
   std::string history_path; // append every finished hand here as one JSON line ("" = off)
   unsigned seed = 0;       // 0 = shuffle at random; N = the same decks every run (bot matches, tests)
@@ -46,9 +48,13 @@ struct hand_result_entry{
 // Client -> server messages (one JSON object per line):
 //   {"type":"join","name":"Bryan"}
 //   {"type":"join","name":"Bryan","token":"..."}   reconnect to a seat after a disconnect
+//   {"type":"join","name":"Robo","bot":true}       a program, not a person (thbot says so)
 //   {"type":"start"}
 //   {"type":"action","action":"fold|check|call|raise","amount":20}
 //     amount = total bet for this round after the raise ("raise to")
+//   {"type":"end_game"}   only for a person alone with bots: stop, show who is up and down
+//   {"type":"new_game"}   same person, or anyone once the game is over: everyone back to
+//                         the starting chips, hand 1 next
 //
 // Server -> client messages:
 //   {"type":"welcome","seat":0,"name":"Bryan","token":"..."}
@@ -115,6 +121,7 @@ class table: public observer{
     int current_bet = 0;
     int last_raise_size = 0;
     bool reveal_cards = false;          // showdown: everyone sees hands still in
+    bool game_over = false;             // ended by a player: nothing is dealt until a new game
     std::vector<hand_result_entry> last_result;
     json record;                        // the hand being played (see hand history)
     json last_record;                   // the last finished hand
@@ -123,6 +130,8 @@ class table: public observer{
     void handle_join(int client, const json& msg);
     void handle_start(int client);
     void handle_action(int client, const json& msg);
+    void handle_end_game(int client);
+    void handle_new_game(int client);
 
     // Game flow
     bool start_hand();
@@ -136,6 +145,11 @@ class table: public observer{
     void finish_hand();
     void begin_turn(int seat);
     void fold_seat(int seat);
+    bool fold_absent(int seat);
+    void cancel_hand();
+    void reset_game(const std::string& by);
+    bool alone_with_bots(int seat) const;
+    json standings() const;
 
     int next_seat(int from, const std::function<bool(const player&)>& pred) const;
     bool needs_to_act(const player& p) const;
