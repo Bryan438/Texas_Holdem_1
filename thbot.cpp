@@ -17,6 +17,7 @@
 #include <vector>
 #include "bot.h"
 #include "line_buffer.h"
+#include "rl_policy.h"
 
 struct bot_config{
   std::string host = "127.0.0.1";
@@ -246,7 +247,9 @@ static void usage(const char* program){
          "  --delay S      seconds to think before each move (default 1.5)\n"
          "  --start        start each hand when 2+ players are ready, like typing s\n"
          "                 (by default the bot waits for a person to start)\n"
-         "  --seed N       repeat the same choices\n\n"
+         "  --seed N       repeat the same choices\n"
+         "  --model FILE   the network the \"rl\" style plays with, from rl/train.py\n"
+         "                 (default: the one built into this program)\n\n"
          "Example: %s 127.0.0.1 4000 --bots 2 --style rules\n",
          program, bot_style_list(), program);
 }
@@ -292,6 +295,13 @@ int main(int argc, char* argv[]){
     else if(arg == "--start"){
       cfg.starts_hands = true;
     }
+    else if(arg == "--model" && has_value){
+      std::string error;
+      if(!rl_use_model_file(argv[++i], error)){
+        printf("%s\n", error.c_str());
+        return 1;
+      }
+    }
     else if(arg.rfind("--", 0) != 0 && positional == 0){
       cfg.host = arg;
       positional++;
@@ -308,6 +318,11 @@ int main(int argc, char* argv[]){
       printf("Unknown option \"%s\". See --help.\n", arg.c_str());
       return 1;
     }
+  }
+
+  if(cfg.style == bot_style::RL && rl_current_model() == nullptr){
+    printf("The \"rl\" style needs a trained network: pass --model FILE (see rl/train.py).\n");
+    return 1;
   }
 
   std::vector<std::thread> threads;

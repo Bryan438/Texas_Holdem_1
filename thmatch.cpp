@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 #include "match.h"
+#include "rl_policy.h"
 #include "stats.h"
 
 static void usage(const char* program){
@@ -15,7 +16,9 @@ static void usage(const char* program){
          "  --hands N      hands to play (default 2000)\n"
          "  --chips N      chips every bot starts every hand with (default 200)\n"
          "  --seed N       same seed, same cards and same result (default 1)\n"
-         "  --history FILE also save the hands here, for thstats\n\n"
+         "  --history FILE also save the hands here, for thstats\n"
+         "  --model FILE   the network the \"rl\" style plays with, from rl/train.py\n"
+         "                 (default: the one built into this program)\n\n"
          "Example: %s --hands 5000 rules calling random\n",
          program, bot_style_list(), program);
 }
@@ -52,6 +55,13 @@ int main(int argc, char* argv[]){
     else if(arg == "--history" && has_value){
       options.history_path = argv[++i];
     }
+    else if(arg == "--model" && has_value){
+      std::string error;
+      if(!rl_use_model_file(argv[++i], error)){
+        printf("%s\n", error.c_str());
+        return 1;
+      }
+    }
     else{
       bot_style style;
       if(!parse_bot_style(arg, style)){
@@ -64,6 +74,12 @@ int main(int argc, char* argv[]){
   if(styles.size() < 2 || styles.size() > 12){
     usage(argv[0]);
     return 1;
+  }
+  for(bot_style style : styles){
+    if(style == bot_style::RL && rl_current_model() == nullptr){
+      printf("The \"rl\" style needs a trained network: pass --model FILE (see rl/train.py).\n");
+      return 1;
+    }
   }
 
   match_result result = run_match(styles, options);

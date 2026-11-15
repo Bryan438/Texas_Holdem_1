@@ -17,6 +17,8 @@ jobs:
       - name: Build server, stats tool and bots
         run: make
       - name: Short bot match
-        run: ./thmatch --hands 500 equity rules calling random
+        run: |
+          ./thmatch --hands 500 equity rules calling random
+          ./thmatch --hands 500 rl equity rules calling
       - name: Run tests (AddressSanitizer + UBSan)
         run: make test
