@@ -604,6 +604,34 @@ void table::deal_next_street(){
 
 void table::finish_hand(){
   int n = seats.size();
+
+  // A bet that nobody matched goes back to the bettor before the pot is paid.
+  // Those chips were never at risk, so they are not part of the pot and not
+  // part of what the winner "wins". It is whatever the biggest contribution
+  // exceeds the second biggest by.
+  int top = -1, second = 0;
+  for(int i = 0; i < n; i++){
+    int put = seats[i]->total_bet;
+    if(top < 0 || put > seats[top]->total_bet){
+      if(top >= 0){
+        second = std::max(second, seats[top]->total_bet);
+      }
+      top = i;
+    }
+    else{
+      second = std::max(second, put);
+    }
+  }
+  json returned = json::array();
+  if(top >= 0 && seats[top]->in_hand && seats[top]->total_bet > second){
+    player& p = *seats[top];
+    int back = p.total_bet - second;
+    p.total_bet -= back;
+    p.stack += back;
+    returned.push_back({{"seat", top}, {"name", p.name}, {"amount", back}});
+    event("Uncalled bet of " + std::to_string(back) + " returned to " + p.name,
+          {{"kind", "uncalled"}, {"name", p.name}, {"amount", back}});
+  }
   std::vector<int> contributions(n, 0);
   std::vector<bool> in_hand(n, false);
   std::vector<int> scores(n, 0);
@@ -645,6 +673,7 @@ void table::finish_hand(){
   }
   record["board"] = board_codes;
   record["pot"] = std::accumulate(contributions.begin(), contributions.end(), 0);
+  record["returned"] = returned;   // uncalled bets handed back: in the actions, not in the pot
   record["showdown"] = json::array();
   if(showdown){
     for(int i = 0; i < n; i++){

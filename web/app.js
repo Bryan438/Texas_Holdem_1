@@ -470,6 +470,11 @@ function renderSummary() {
   }
 
   body.push(el('h3', {}, t('summary.result'), el('span', {}, '· ' + t('summary.pot', { n: formatChips(sum.pot) }))));
+  // A bet nobody called went back to the bettor and is not part of the pot.
+  if (sum.returned && sum.returned.length > 0) {
+    body.push(el('ul', {}, sum.returned.map((back) => el('li', {},
+      eventNodes({ kind: 'uncalled', name: back.name, amount: back.amount })))));
+  }
   const shown = new Map((sum.showdown || []).map((s) => [s.seat, s.cards]));
   body.push(el('table', { class: 'nets' }, el('tbody', {}, (sum.players || []).map((p) => {
     const cards = p.cards || shown.get(p.seat);

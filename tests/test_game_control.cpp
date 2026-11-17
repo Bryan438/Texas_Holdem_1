@@ -4,6 +4,7 @@
 #include <string>
 #include "test_framework.h"
 #include "table_harness.h"
+#include "stats.h"
 
 namespace {
 
@@ -293,4 +294,72 @@ TEST(start_after_the_end_begins_a_new_game){
   h.send(301, {{"type", "new_game"}});
   CHECK(h.last(301, "state").value("game_over", true) == false);
   CHECK_EQ(h.t.seat(h.t.seat_of(301)).stack, 200);
+}
+
+// ---------------------------------------------------------------- a bet nobody called
+
+TEST(uncalled_bet_goes_back_and_is_not_counted_as_won){
+  harness h(3);
+  h.start();
+  // Seat 0 raises to 60, the blinds fold: 58 of it was never matched.
+  h.act(0, "raise", 60);
+  h.act(1, "fold");
+  h.act(2, "fold");
+  CHECK(h.t.get_stage() == WAITING);
+  json back = json();
+  for(const json& m : h.out.got[harness::client(1)]){
+    if(m["type"] == "event" && m.value("kind", "") == "uncalled") back = m;
+  }
+  CHECK(back.value("name", "") == "P0");
+  CHECK_EQ(back.value("amount", 0), 58);
+  CHECK(back.value("text", "") == "Uncalled bet of 58 returned to P0");
+  // What was really won: the two blinds and the 2 of the raise that the big blind covered.
+  json st = h.last(harness::client(1), "state");
+  CHECK_EQ(st["result"][0]["amount"].get<int>(), 5);
+  CHECK(h.got_event(harness::client(1), "P0 wins 5"));
+  CHECK_EQ(h.t.seat(0).stack, 203);
+  CHECK_EQ(h.total_chips(), 600);
+
+  const json& hand = h.t.last_hand();
+  CHECK_EQ(hand["pot"].get<int>(), 5);
+  CHECK(hand["returned"][0]["seat"] == 0 && hand["returned"][0]["amount"] == 58);
+  CHECK(hand["winners"][0]["won"] == 5);
+  CHECK(check_hand(hand) == "");
+}
+
+TEST(a_called_bet_is_not_returned){
+  harness h(2);
+  h.start();
+  int first = h.t.get_turn();
+  h.act(first, "raise", 20);
+  h.act(1 - first, "call");
+  h.play_out();
+  const json& hand = h.t.last_hand();
+  CHECK(hand["returned"].empty());
+  CHECK_EQ(hand["pot"].get<int>(), 40);
+  int won = 0;
+  for(const json& w : hand["winners"]) won += w["won"].get<int>();
+  CHECK_EQ(won, 40);
+  CHECK(check_hand(hand) == "");
+}
+
+TEST(the_part_of_a_bet_a_short_stack_cannot_cover_goes_back){
+  harness h(2);
+  h.start();
+  h.play_out();                                   // an ordinary hand first
+  h.t.set_stack(0, 30);                           // then seat 0 is short
+  h.t.set_stack(1, 370);
+  h.start();
+  if(h.t.get_turn() == 0) h.act(0, "call");       // the short stack is the dealer: it completes the blind first
+  h.act(1, "raise", 100);
+  h.act(0, "call");                               // all it has: 30
+  CHECK(h.t.get_stage() == WAITING);              // nobody can bet any more: straight to showdown
+  const json& hand = h.t.last_hand();
+  CHECK_EQ(hand["showdown"].size(), 2);
+  CHECK_EQ(hand["pot"].get<int>(), 60);           // 30 each
+  CHECK(hand["returned"][0]["seat"] == 1 && hand["returned"][0]["amount"] == 70);
+  CHECK(check_hand(hand) == "");
+  CHECK_EQ(h.total_chips(), 400);
+  // Seat 1 can lose 30 at most, whatever the cards.
+  CHECK(h.t.seat(1).stack >= 340);
 }

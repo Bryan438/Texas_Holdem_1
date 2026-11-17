@@ -37,11 +37,15 @@ TEST(history_records_blinds_actions_and_winner){
   CHECK(a[2]["action"] == "fold" && a[2]["seat"] == 0 && a[2]["street"] == "preflop");
   CHECK(a[3]["action"] == "fold" && a[3]["seat"] == 1);
 
-  CHECK_EQ(hand["pot"].get<int>(), 3);
+  // Nobody matched the second chip of the big blind: it went back, and the
+  // pot is the small blind plus the one chip of the big blind that it covered.
+  CHECK_EQ(hand["returned"].size(), 1);
+  CHECK(hand["returned"][0]["seat"] == 2 && hand["returned"][0]["amount"] == 1);
+  CHECK_EQ(hand["pot"].get<int>(), 2);
   CHECK(hand["board"].empty());
   CHECK(hand["showdown"].empty());
   CHECK_EQ(hand["winners"].size(), 1);
-  CHECK(hand["winners"][0]["seat"] == 2 && hand["winners"][0]["won"] == 3);
+  CHECK(hand["winners"][0]["seat"] == 2 && hand["winners"][0]["won"] == 2);
   CHECK_EQ((*find_player(hand, 2))["net"].get<int>(), 1);
   CHECK_EQ((*find_player(hand, 1))["net"].get<int>(), -1);
   CHECK_EQ((*find_player(hand, 2))["end_stack"].get<int>(), 201);
@@ -61,7 +65,8 @@ TEST(history_summary_hides_other_players_cards){
       bool mine = p["seat"].get<int>() == seat;
       CHECK(p.contains("cards") == mine);
     }
-    CHECK(summary["winners"][0]["won"] == 3);
+    CHECK(summary["winners"][0]["won"] == 2);
+    CHECK(summary["returned"][0]["amount"] == 1);      // everyone is told what went back
   }
 }
 
@@ -242,6 +247,29 @@ TEST(stats_count_vpip_pfr_net_and_showdowns){
   std::string table = format_stats(stats);
   CHECK(table.find("Alice") < table.find("Bob"));   // sorted by net, best first
   CHECK(table.find("100%") != std::string::npos);
+}
+
+TEST(stats_check_hand_counts_returned_bets){
+  // Alice bets 50 on the flop instead of 6 and Bob folds: 50 goes straight back.
+  json hand = made_up_hand();
+  hand["players"][2]["end_stack"] = 98;
+  hand["players"][2]["net"] = -2;
+  hand["actions"][6]["amount"] = 50;
+  hand["actions"][6]["to"] = 50;
+  hand["actions"][7] = {{"street", "flop"}, {"seat", 1}, {"action", "fold"}, {"amount", 0}};
+  hand["showdown"] = json::array();
+  hand["returned"] = {{{"seat", 0}, {"amount", 50}}};
+  hand["pot"] = 14;
+  hand["winners"][0]["won"] = 14;
+  hand["players"][0]["end_stack"] = 108;
+  hand["players"][0]["net"] = 8;
+  hand["players"][1]["end_stack"] = 94;
+  hand["players"][1]["net"] = -6;
+  CHECK(check_hand(hand) == "");
+  CHECK_EQ(compute_stats({hand})["Alice"].biggest_win, 14);   // not 64
+  // Without the note that 50 went back, the hand does not add up.
+  hand.erase("returned");
+  CHECK(!check_hand(hand).empty());
 }
 
 TEST(stats_check_hand_finds_bad_records){

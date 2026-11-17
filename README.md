@@ -116,7 +116,8 @@ Server -> client
   hole cards only for yourself and for hands shown at showdown
 
 Rules handled by the server: turn order, check/call/raise options, minimum raise (a short
-all-in does not reopen betting), side pots, heads-up blinds, button rotation. A player who
+all-in does not reopen betting), side pots, heads-up blinds, button rotation. A bet that
+nobody calls goes back to the bettor before the pot is paid, so "wins N" is the pot itself. A player who
 runs out of time checks if possible, otherwise folds. A player who disconnects during a hand
 keeps their cards for 30 seconds (`--grace`; the turn timer still runs) and plays on if they
 are back by then, otherwise folds; a player who is all-in stays in the hand. They get their
@@ -129,7 +130,8 @@ sends `start`; with `--next-hand N` the next one starts by itself after N second
 ## Hand history and stats
 Every finished hand is appended to `hands.jsonl`, one JSON object per line: start stacks,
 every player's hole cards, blinds and actions with the street and chips put in (plus
-`reason` for timeouts and disconnects), board, showdown, winners, and each player's net.
+`reason` for timeouts and disconnects), board, showdown, the pot, any uncalled bet that was
+`returned`, winners, and each player's net.
 **The file contains everyone's cards**: it stays on the server and is never sent to players.
 
 ```bash

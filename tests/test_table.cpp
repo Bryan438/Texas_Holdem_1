@@ -90,7 +90,8 @@ TEST(table_everyone_folds_to_big_blind){
   json st = h.last(harness::client(0), "state");
   CHECK_EQ(st["result"].size(), 1);
   CHECK_EQ(st["result"][0]["seat"].get<int>(), 2);
-  CHECK_EQ(st["result"][0]["amount"].get<int>(), 3);
+  CHECK_EQ(st["result"][0]["amount"].get<int>(), 2);   // the pot: the unmatched chip of the blind went back
+  CHECK(h.got_event(harness::client(0), "Uncalled bet of 1 returned to P2"));
   CHECK(st["seats"][2]["cards"].is_null());  // no showdown: cards stay hidden
   CHECK_EQ(st["seats"][2]["bet"].get<int>(), 0);  // no bets left on the table between hands
 }
