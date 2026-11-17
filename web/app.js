@@ -219,6 +219,7 @@ function renderAll() {
   renderLog();
   if ($('summary').open) renderSummary();
   if ($('standings').open) renderStandings();
+  if ($('bots').open) renderAddBots();
 }
 
 function renderGame() {
@@ -282,7 +283,14 @@ function renderSeats(st) {
 
     const turn = st.turn === seat.seat;
     const classes = ['seat', mine && 'me', turn && 'turn', winners.includes(seat.seat) && 'winner', out && 'out'];
+    // A bot added from a page may be sent away between hands.
+    const remove = seat.house && !live
+      ? el('button', { class: 'remove', type: 'button', title: t('bots.remove', { name: seat.name }),
+                       'aria-label': t('bots.remove', { name: seat.name }),
+                       onclick: () => send({ type: 'remove_bot', seat: seat.seat }) }, '×')
+      : null;
     nodes.push(el('div', { class: classes.filter(Boolean).join(' '), 'data-seat': seat.seat, style: `left:${at.x}%;top:${at.y}%` },
+      remove,
       el('div', { class: 'badges' }, badges),
       el('div', { class: 'cards' }, cards),
       el('div', { class: 'name', title: seat.name }, mine ? `${seat.name} (${t('you')})` : seat.name),
@@ -360,7 +368,9 @@ function renderActions(st) {
                : null;
     fill(box, line, el('div', { class: 'buttons' },
       el('button', { class: 'primary', type: 'button', disabled: ready < 2, onclick: () => send({ type: 'start' }) },
-         t(st.hand > 0 ? 'start.next' : 'start'))));
+         t(st.hand > 0 ? 'start.next' : 'start')),
+      // Alone at the table, adding a bot is the next step: that button leads then.
+      el('button', { class: ready < 2 ? 'primary' : '', type: 'button', onclick: showAddBots }, t('bots.add'))));
     return;
   }
 
@@ -517,6 +527,47 @@ function renderStandings() {
 function showStandings() {
   renderStandings();
   if (!$('standings').open) $('standings').showModal();
+}
+
+// Choose how many bots of which kind to seat. The server plays them.
+const STYLES = ['rl', 'equity', 'rules', 'calling', 'random'];
+let botStyle = 'rl', botCount = 1;
+
+function renderAddBots() {
+  const free = Math.max(0, 12 - ((S.state && S.state.seats.length) || 0));
+  botCount = Math.max(1, Math.min(botCount, Math.max(1, free)));
+  const choices = STYLES.map((style) => el('label', { class: 'style-choice' },
+    el('input', { type: 'radio', name: 'bot-style', value: style, checked: style === botStyle,
+                  onchange: () => { botStyle = style; } }),
+    el('div', {}, el('b', {}, t('style.' + style)), el('span', {}, t('style.' + style + '.about')))));
+  const count = el('input', { id: 'bot-count', type: 'number', min: 1, max: Math.max(1, free), step: 1, value: botCount });
+  const go = el('button', { class: 'primary', type: 'button', disabled: free === 0 }, t('bots.button', { n: botCount }));
+  const readCount = () => {
+    botCount = Math.max(1, Math.min(Number(count.value) || 1, Math.max(1, free)));
+    go.textContent = t('bots.button', { n: botCount });
+  };
+  count.addEventListener('input', readCount);
+  count.addEventListener('change', () => { readCount(); count.value = botCount; });
+  go.addEventListener('click', () => {
+    readCount();
+    send({ type: 'add_bot', style: botStyle, count: botCount });
+    $('bots').close();
+  });
+  fill($('bots'),
+    el('div', { class: 'head' },
+      el('h2', {}, t('bots.title')),
+      el('button', { class: 'quiet', type: 'button', onclick: () => $('bots').close() }, t('summary.close'))),
+    el('div', { class: 'body' },
+      el('fieldset', { class: 'styles' }, el('legend', {}, t('bots.style')), choices),
+      el('label', { class: 'count-label', for: 'bot-count' }, t('bots.count')),
+      el('div', { class: 'count-row' }, count),
+      free === 0 ? el('p', { class: 'error' }, t('bots.full')) : null),
+    el('div', { class: 'foot' }, go));
+}
+
+function showAddBots() {
+  renderAddBots();
+  $('bots').showModal();
 }
 
 // Ask before something that cannot be undone.

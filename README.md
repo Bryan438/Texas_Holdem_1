@@ -45,6 +45,7 @@ make                      # builds ./thserver, ./thstats, ./thbot, ./thmatch and
 ./thserver --port 4000 --turn 60 --chips 500 --next-hand 10
 ./thserver --turn 0       # no time limit
 ./thserver --next-hand 10 # optional: start the next hand by itself 10 s after the last one
+./thserver --bot-delay 2  # bots added from the web page think 2 s before each move (default 1)
 ./thserver --grace 60     # a player who disconnects mid-hand has 60 s to come back (default 30, 0 = folds at once)
 ./thserver --history game.jsonl     # save hands to game.jsonl (default hands.jsonl)
 ./thserver --no-history   # do not save hands
@@ -56,14 +57,19 @@ Players sit down from a browser (below), from the terminal client
 
 ## Play in a browser
 Start `./thserver` and open **http://localhost:8080**. Friends on the same network open
-`http://<your ip>:8080`. Type a name, sit down, and press the deal button once two players
-have chips; to play against bots, start some in another terminal (`./thbot --bots 3`, see Bots).
+`http://<your ip>:8080`. Type a name, sit down, press **Add bots** to seat some opponents,
+and deal. Bots added from the page are played by the server itself: there is nothing else to
+start. (Bots in another terminal, `./thbot --bots 3`, still work as before; see Bots.)
 
 - The page shows the table from your seat: everyone's stack, bet and status, the board,
   the pot, your cards and best hand, whose turn it is with the time left, and a hand log.
 - On your turn: fold, check or call, or raise with the slider, the number box or the
   min / ½ pot / pot / all-in buttons. Keys: `F` fold, `C` check or call, `R` raise.
 - "Review last hand" shows the finished hand street by street.
+- **Add bots**: pick a style (rl, equity, rules, calling, random) and how many. They join
+  like anyone else, from the next hand if one is running, and wait a second before each
+  move (`--bot-delay`). Between hands the × on a bot's seat sends it away. Any person at the
+  table may add or remove these bots; bots that joined over the network cannot be removed.
 - English and Chinese; the button in the top right switches, and the choice is remembered.
 - Reloading the page or losing the connection takes your seat back by itself (the page keeps
   the token), and the hand log comes back with it. If that happens during a hand, your cards
@@ -96,6 +102,8 @@ Client -> server
 {"type":"action","action":"raise","amount":20}   // raise TO 20 this round
 {"type":"end_game"}   // only for a person alone with bots: stop and show the standings
 {"type":"new_game"}   // same person, or anyone once the game is over: starting chips again, hand 1 next
+{"type":"add_bot","style":"rl","count":2}   // seat bots that the server plays itself
+{"type":"remove_bot","seat":3}              // between hands, send one of those bots away
 ```
 
 Server -> client
@@ -293,6 +301,9 @@ Tests have no external dependencies (`tests/test_framework.h`). They cover:
   all-in players left in, the turn timer still applied
 - ending and restarting a game: only for a person alone with bots, the hand cancelled with
   every chip returned and nothing written to the history, standings, nothing dealt after the end
+- bots added from the page: names, styles, the move delay, 25 whole hands that add up, seats
+  for the next hand, a full table, removal only between hands and only of those bots, the
+  button passed on, no play once every person has left
 - the web client (`web/tests`, run by Node): seat and chip positions, raise sizes, the
   last-hand review, every string present in both languages with the same placeholders
 - full hands driven through `table::on_message` with a fake clock: state reaching every

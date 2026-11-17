@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <random>
 #include <string>
 #include <vector>
 #include "third_party/json.hpp"
@@ -23,6 +24,7 @@ struct table_config{
   int turn_seconds = 300;  // 5 minutes; 0 = no time limit
   int next_hand_seconds = 0; // 0 = a player starts each hand with "start";
                              // N = start the next hand by itself after N seconds
+  int bot_delay_ms = 1000;  // a bot the server runs waits this long before each move
   int disconnect_grace_seconds = 30; // a player who disconnects during a hand keeps their
                                      // cards this long before folding (0 = folds at once)
   bool log_events = true;  // print events on the server console
@@ -55,6 +57,8 @@ struct hand_result_entry{
 //   {"type":"end_game"}   only for a person alone with bots: stop, show who is up and down
 //   {"type":"new_game"}   same person, or anyone once the game is over: everyone back to
 //                         the starting chips, hand 1 next
+//   {"type":"add_bot","style":"rl","count":2}   a person seats bots that the server runs
+//   {"type":"remove_bot","seat":3}               between hands, one of those bots leaves
 //
 // Server -> client messages:
 //   {"type":"welcome","seat":0,"name":"Bryan","token":"..."}
@@ -122,6 +126,8 @@ class table: public observer{
     int last_raise_size = 0;
     bool reveal_cards = false;          // showdown: everyone sees hands still in
     bool game_over = false;             // ended by a player: nothing is dealt until a new game
+    int64_t bot_move_at = 0;            // when the house bot whose turn it is moves
+    std::mt19937 bot_rng;               // the house bots' dice
     std::vector<hand_result_entry> last_result;
     json record;                        // the hand being played (see hand history)
     json last_record;                   // the last finished hand
@@ -132,6 +138,8 @@ class table: public observer{
     void handle_action(int client, const json& msg);
     void handle_end_game(int client);
     void handle_new_game(int client);
+    void handle_add_bot(int client, const json& msg);
+    void handle_remove_bot(int client, const json& msg);
 
     // Game flow
     bool start_hand();
@@ -150,6 +158,9 @@ class table: public observer{
     void reset_game(const std::string& by);
     bool alone_with_bots(int seat) const;
     json standings() const;
+    int take_seat();
+    std::string house_bot_name(const std::string& style) const;
+    void play_house_bot(int seat);
 
     int next_seat(int from, const std::function<bool(const player&)>& pred) const;
     bool needs_to_act(const player& p) const;
