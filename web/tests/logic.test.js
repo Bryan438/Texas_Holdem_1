@@ -144,6 +144,10 @@ test('events are worded in either language', () => {
   assert.equal(text('zh', { kind: 'hand_cancelled', hand: 4 }), '第 4 手作废，下注已退回');
   assert.equal(text('zh', { kind: 'uncalled', name: 'Al', amount: 58 }), '没人跟注的 58 退回给 Al');
   assert.equal(text('en', { kind: 'uncalled', name: 'Al', amount: 58 }), 'Uncalled bet of 58 returned to Al');
+  assert.equal(text('zh', { kind: 'bot_added', name: 'RL 1', by: 'Al', style: 'rl' }), 'Al 添加了机器人 RL 1');
+  assert.equal(text('en', { kind: 'bot_added', name: 'RL 1', by: 'Al', next_hand: true }),
+               'Al added the bot RL 1 (plays from the next hand)');
+  assert.equal(text('zh', { kind: 'bot_removed', name: 'RL 1', by: 'Al' }), 'Al 移除了机器人 RL 1');
   // A kind this page has never heard of: show the server's own line.
   assert.equal(eventKey({ kind: 'rabbit_hunt' }), null);
   assert.equal(text('zh', { kind: 'rabbit_hunt', text: 'Bob peeks' }), 'Bob peeks');

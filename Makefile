@@ -3,13 +3,15 @@ CXXFLAGS = -std=c++17 -Wall -g -O2 -pthread
 
 # The game itself; the server adds the network (transport.cpp) on top.
 CORE = card.cpp deck_of_card.cpp player.cpp table.cpp hand_evaluator.cpp pot_calculator.cpp
+BOT = bot.cpp equity.cpp rl_policy.cpp rl_model_data.cpp
 SRCS = $(CORE) transport.cpp websocket.cpp
 OBJS = $(SRCS:.cpp=.o)
 HEADERS = $(wildcard *.h)
 
 all: thserver thstats thbot thmatch thenv
 
-thserver: controller.o $(OBJS)
+# The server plays the bots that a page adds, so it carries the bot code too.
+thserver: controller.o $(OBJS) $(BOT:.cpp=.o)
 	$(CXX) $(CXXFLAGS) -o $@ $^
 
 # Reads the hand history the server writes and prints per-player stats.
@@ -17,7 +19,6 @@ thstats: thstats.o stats.o
 	$(CXX) $(CXXFLAGS) -o $@ $^
 
 # A bot that joins a running server like a player.
-BOT = bot.cpp equity.cpp rl_policy.cpp rl_model_data.cpp
 thbot: thbot.o $(BOT:.cpp=.o) card.o hand_evaluator.o
 	$(CXX) $(CXXFLAGS) -o $@ $^
 

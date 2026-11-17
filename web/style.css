@@ -214,6 +214,23 @@ button.small { padding: 5px 10px; font-size: 13px; font-weight: 500; }
 .seat .status.away { color: var(--gold); }
 .tag { margin-left: 5px; padding: 0 5px; border: 1px solid var(--line); border-radius: 8px; font-size: 11px; color: var(--muted); }
 .seat .timer { font-size: 12px; font-variant-numeric: tabular-nums; color: var(--gold); min-height: 16px; }
+.remove {
+  position: absolute;
+  top: -9px;
+  left: -6px;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border-radius: 50%;
+  font-size: 14px;
+  line-height: 1;
+  font-weight: 600;
+  display: grid;
+  place-items: center;
+  background: var(--panel-2);
+  color: var(--muted);
+}
+.remove:hover:not(:disabled) { color: #f0a5a2; border-color: #f0a5a2; }
 .badges { position: absolute; top: -9px; right: -6px; display: flex; gap: 3px; }
 .badge {
   min-width: 20px;
@@ -320,6 +337,15 @@ button.small { padding: 5px 10px; font-size: 13px; font-weight: 500; }
 .summary .nets th.chips { text-align: right; padding-right: 16px; }
 .summary .foot { display: flex; justify-content: flex-end; gap: 8px; padding: 0 18px 16px; }
 .confirm { width: min(420px, calc(100vw - 32px)); }
+.styles { display: flex; flex-direction: column; gap: 8px; margin: 0; padding: 0; border: 0; }
+.styles legend, .count-label { color: var(--muted); font-size: 13px; margin: 14px 0 6px; padding: 0; }
+.style-choice { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; cursor: pointer; }
+.style-choice:has(input:checked) { border-color: var(--gold); background: rgba(233, 196, 106, 0.08); }
+.style-choice input { margin-top: 3px; accent-color: var(--gold); }
+.style-choice b { display: block; font-weight: 650; }
+.style-choice span { color: var(--muted); font-size: 13px; }
+.count-row { display: flex; align-items: center; gap: 8px; }
+.count-row input { width: 72px; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; font-variant-numeric: tabular-nums; }
 .confirm p { padding: 20px 18px 16px; }
 
 /* ---------------------------------------------------------------- small screens */

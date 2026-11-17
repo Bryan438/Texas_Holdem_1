@@ -1,10 +1,12 @@
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cstdio>
 #include <ctime>
 #include <fstream>
 #include <random>
 #include "table.h"
+#include "bot.h"
 #include "hand_evaluator.h"
 #include "pot_calculator.h"
 #include <numeric>
@@ -48,6 +50,10 @@ table::table(sender* o, table_config c, clock_fn clock)
   : out(o), config(c), now_ms(clock ? clock : steady_ms){
   if(config.seed != 0){
     deck->seed(config.seed);
+    bot_rng.seed(config.seed + 1);
+  }
+  else{
+    bot_rng.seed(std::random_device()());
   }
 }
 
@@ -89,6 +95,12 @@ void table::on_message(int client, const std::string& line){
   }
   else if(type == "new_game"){
     handle_new_game(client);
+  }
+  else if(type == "add_bot"){
+    handle_add_bot(client, msg);
+  }
+  else if(type == "remove_bot"){
+    handle_remove_bot(client, msg);
   }
   else{
     send_error(client, "unknown message type: " + type, "bad_message");
@@ -185,20 +197,7 @@ void table::handle_join(int client, const json& msg){
     }
   }
 
-  int s = -1;
-  if(seats.size() < MAX_PLAYERS){
-    seats.emplace_back(new player());
-    s = seats.size() - 1;
-  }
-  else if(current_stage == WAITING){
-    for(size_t i = 0; i < seats.size(); i++){
-      if(!seats[i]->connected){
-        seats[i].reset(new player());
-        s = i;
-        break;
-      }
-    }
-  }
+  int s = take_seat();
   if(s < 0){
     send_error(client, "the table is full", "table_full");
     return;
@@ -236,6 +235,128 @@ void table::handle_start(int client){
   if(!start_hand()){
     send_error(client, "need at least 2 connected players with chips", "not_enough_players");
   }
+}
+
+// A free seat, made empty: a new one, or between hands the seat of someone
+// who left. -1 when the table is full.
+int table::take_seat(){
+  if(seats.size() < MAX_PLAYERS){
+    seats.emplace_back(new player());
+    return seats.size() - 1;
+  }
+  if(current_stage == WAITING){
+    for(size_t i = 0; i < seats.size(); i++){
+      if(!seats[i]->connected){
+        seats[i].reset(new player());
+        return i;
+      }
+    }
+  }
+  return -1;
+}
+
+// "RL 1", "Equity 2": the style and the smallest number nobody uses.
+std::string table::house_bot_name(const std::string& style) const{
+  std::string label = style == "rl" ? "RL" : style;
+  if(style != "rl" && !label.empty()) label[0] = std::toupper((unsigned char)label[0]);
+  for(int n = 1; ; n++){
+    std::string name = label + " " + std::to_string(n);
+    bool used = std::any_of(seats.begin(), seats.end(), [&](const std::unique_ptr<player>& p){ return p->name == name; });
+    if(!used) return name;
+  }
+}
+
+// A person seats bots that the server plays itself: no program to start, no
+// connection. They join like anyone else (from the next hand if one is running).
+void table::handle_add_bot(int client, const json& msg){
+  const player& by = *seats[seat_of(client)];
+  if(by.bot){
+    send_error(client, "bots cannot add or remove bots", "bots_cannot");
+    return;
+  }
+  std::string style = msg.contains("style") && msg["style"].is_string() ? msg["style"].get<std::string>() : "rl";
+  bot_style parsed;
+  if(!parse_bot_style(style, parsed)){
+    send_error(client, "unknown bot style \"" + style + "\" (use " + bot_style_list() + ")", "bad_style");
+    return;
+  }
+  style = bot_style_name(parsed);
+  int count = msg.contains("count") && msg["count"].is_number_integer() ? msg["count"].get<int>() : 1;
+  count = std::max(1, std::min(count, MAX_PLAYERS));
+
+  int added = 0;
+  for(int k = 0; k < count; k++){
+    int s = take_seat();
+    if(s < 0){
+      break;
+    }
+    player& p = *seats[s];
+    p.name = house_bot_name(style);
+    p.stack = config.starting_stack;
+    p.buy_in = config.starting_stack;
+    p.bot = true;
+    p.house = true;
+    p.style = style;
+    p.token = make_token();   // never handed out: nobody can take this seat over
+    added++;
+    event(by.name + " added the bot " + p.name + (current_stage == WAITING ? "" : " (plays from the next hand)"),
+          {{"kind", "bot_added"}, {"name", p.name}, {"by", by.name}, {"style", style},
+           {"next_hand", current_stage != WAITING}});
+  }
+  if(added == 0){
+    send_error(client, "the table is full", "table_full");
+    return;
+  }
+  broadcast_state();
+}
+
+// Between hands, a bot the server runs leaves the table with its chips.
+void table::handle_remove_bot(int client, const json& msg){
+  const player& by = *seats[seat_of(client)];
+  if(by.bot){
+    send_error(client, "bots cannot add or remove bots", "bots_cannot");
+    return;
+  }
+  int s = msg.contains("seat") && msg["seat"].is_number_integer() ? msg["seat"].get<int>() : -1;
+  if(s < 0 || s >= (int)seats.size() || !seats[s]->house){
+    send_error(client, "only a bot added from the table can be removed", "not_house_bot");
+    return;
+  }
+  if(current_stage != WAITING){
+    send_error(client, "wait until the hand is over", "hand_running");
+    return;
+  }
+  std::string name = seats[s]->name;
+  std::string by_name = by.name;
+  seats.erase(seats.begin() + s);
+  // Everyone after it moves up one seat. The button stays with the same
+  // player, or, if it was the bot's, goes on to whoever sat after it.
+  if(dealer >= s){
+    dealer--;
+  }
+  std::vector<hand_result_entry> kept;
+  for(hand_result_entry r : last_result){
+    if(r.seat == s) continue;
+    if(r.seat > s) r.seat--;
+    kept.push_back(r);
+  }
+  last_result = kept;
+  event(by_name + " removed the bot " + name, {{"kind", "bot_removed"}, {"name", name}, {"by", by_name}});
+  broadcast_state();
+}
+
+// A house bot's move, decided from what its seat may see, like any bot.
+void table::play_house_bot(int s){
+  player& p = *seats[s];
+  bot_style style = bot_style::RL;
+  parse_bot_style(p.style, style);
+  bot_move move = decide(state_for(s), style, bot_rng);
+  std::string error;
+  if(!apply_action(s, move.action, move.amount, error)){
+    // Cannot happen (decide keeps to the allowed moves), but never stall the table.
+    apply_action(s, to_call(p) == 0 ? "check" : "fold", 0, error);
+  }
+  continue_hand(s);
 }
 
 // Is this seat a person, with no other person connected? Then the game is
@@ -389,10 +510,23 @@ void table::tick(){
   if(current_stage == WAITING){
     if(next_hand_at > 0 && now_ms() >= next_hand_at){
       next_hand_at = 0;
+      // Bots the server runs do not play on by themselves once every person has left.
+      bool someone = std::any_of(seats.begin(), seats.end(), [](const std::unique_ptr<player>& p){
+        return p->connected && !p->house;
+      });
+      if(!someone){
+        return;
+      }
       if(!start_hand()){
         event("Not enough players with chips. Waiting for someone to join.", {{"kind", "not_enough_players"}});
         broadcast_state();
       }
+    }
+    return;
+  }
+  if(turn >= 0 && seats[turn]->house){
+    if(now_ms() >= bot_move_at){
+      play_house_bot(turn);
     }
     return;
   }
@@ -722,6 +856,7 @@ void table::finish_hand(){
 
 void table::begin_turn(int s){
   turn = s;
+  bot_move_at = seats[s]->house ? now_ms() + config.bot_delay_ms : 0;
   turn_deadline = config.turn_seconds > 0 ? now_ms() + config.turn_seconds * 1000LL : 0;
 }
 
@@ -881,6 +1016,10 @@ json table::state_for(int viewer) const{
 
     json s = {{"seat", (int)i}, {"name", p.name}, {"stack", p.stack}, {"bet", p.round_bet},
               {"total_bet", p.total_bet}, {"status", status}, {"bot", p.bot}};
+    if(p.house){
+      s["house"] = true;     // run by the server: a person may remove it between hands
+      s["style"] = p.style;
+    }
     if(p.away_until > 0){
       // disconnected but still holding cards: seconds left to come back
       s["reconnect_in"] = std::max<int64_t>(0, (p.away_until - now_ms() + 999) / 1000);

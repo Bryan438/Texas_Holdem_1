@@ -14,6 +14,8 @@ struct player{
   bool connected = true;
   int stack = 0;            // chips not yet in the pot
   bool bot = false;         // said so when joining (thbot does); people do not
+  bool house = false;       // a bot the server runs itself (added from a page): no connection
+  std::string style;        // a house bot's style: "rl", "equity", ...
   int buy_in = 0;           // chips at the start of this game, to tell who is up or down
 
   // Disconnected during a hand: the cards are held until this time (table
