@@ -142,6 +142,8 @@ test('events are worded in either language', () => {
   assert.equal(text('zh', { kind: 'game_over', name: 'Al' }), 'Al 结束了牌局');
   assert.equal(text('en', { kind: 'new_game', name: 'Al', amount: 200 }), 'Al started a new game: everyone has 200 chips');
   assert.equal(text('zh', { kind: 'hand_cancelled', hand: 4 }), '第 4 手作废，下注已退回');
+  assert.equal(text('zh', { kind: 'uncalled', name: 'Al', amount: 58 }), '没人跟注的 58 退回给 Al');
+  assert.equal(text('en', { kind: 'uncalled', name: 'Al', amount: 58 }), 'Uncalled bet of 58 returned to Al');
   // A kind this page has never heard of: show the server's own line.
   assert.equal(eventKey({ kind: 'rabbit_hunt' }), null);
   assert.equal(text('zh', { kind: 'rabbit_hunt', text: 'Bob peeks' }), 'Bob peeks');

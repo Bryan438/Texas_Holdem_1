@@ -59,6 +59,11 @@ std::string check_hand(const json& hand){
     put_in[a.value("seat", -1)] += a.value("amount", 0);
     total_in += a.value("amount", 0);
   }
+  // An uncalled bet that was handed back never reached the pot.
+  for(const json& r : hand.value("returned", json::array())){
+    put_in[r.value("seat", -1)] -= r.value("amount", 0);
+    total_in -= r.value("amount", 0);
+  }
   for(const json& w : hand.value("winners", json::array())){
     won[w.value("seat", -1)] += w.value("won", 0);
     total_out += w.value("won", 0);
