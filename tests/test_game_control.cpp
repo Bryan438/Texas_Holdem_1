@@ -239,9 +239,9 @@ TEST(nothing_is_dealt_after_the_end_until_a_new_game){
   h.now += 60000;
   h.t.tick();
   CHECK(h.t.get_stage() == WAITING);
-  // A bot cannot decide to play on.
+  // A bot cannot decide to play on: only the host deals.
   h.send(harness::client(1), {{"type", "start"}});
-  CHECK(h.error_code(1) == "game_over");
+  CHECK(h.error_code(1) == "not_host");
   CHECK(h.t.get_stage() == WAITING);
 
   h.send(harness::client(0), {{"type", "new_game"}});

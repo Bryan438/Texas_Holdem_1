@@ -40,8 +40,8 @@ TEST(leaving_between_hands_frees_the_seat_at_once){
   // No longer seated: the game does not take orders from that connection...
   h.send(harness::client(1), {{"type", "start"}});
   CHECK(h.error_code(harness::client(1)) == "join_first");
-  // ...but it may sit down again, under any name, with fresh chips.
-  h.join(harness::client(1), "P1");
+  // ...but it may sit down again (see test_host_and_ledger for the chips).
+  h.join(harness::client(1), "P1", h.token_of(harness::client(1)));
   CHECK(h.seat_named("P1") >= 0);
   CHECK_EQ(h.t.seat(h.seat_named("P1")).stack, 200);
 }

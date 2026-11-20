@@ -181,3 +181,14 @@ test('leaving, removal and votes are worded', () => {
                    ['Ann 提议重新开始：桌上所有人需在 60 秒内同意']);
   assert.equal(errorText('zh', { code: 'vote_open', message: 'x' }), '已经有一个投票在进行，请先表态。');
 });
+
+test('the host, coming back and buying in again are worded', () => {
+  assert.equal(eventKey({ kind: 'kicked', name: 'Bob' }), 'event.kicked');
+  assert.equal(eventKey({ kind: 'kicked', name: 'Bob', by: 'Ann' }), 'event.kicked.by');
+  assert.equal(eventKey({ kind: 'returned', name: 'Bob', amount: 50, next_hand: true }), 'event.returned.next');
+  assert.deepEqual(eventPieces('zh', { kind: 'returned', name: 'Bob', amount: 50, next_hand: false }),
+                   ['Bob 回来了，带着 50 筹码']);
+  assert.deepEqual(eventPieces('en', { kind: 'rebuy', name: 'Bob', amount: 200 }), ['Bob buys in again for 200 chips']);
+  assert.deepEqual(eventPieces('zh', { kind: 'host', name: 'Ann' }), ['Ann 现在是房主：负责发牌和管理机器人']);
+  assert.equal(errorText('zh', { code: 'not_host', message: 'only the host (Ann) can deal' }), '只有房主可以这样做。');
+});

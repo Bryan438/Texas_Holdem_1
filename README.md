@@ -74,10 +74,14 @@ start. (Bots in another terminal, `./thbot --bots 3`, still work as before; see 
 - On your turn: fold, check or call, or raise with the slider, the number box or the
   min / ½ pot / pot / all-in buttons. Keys: `F` fold, `C` check or call, `R` raise.
 - "Review last hand" shows the finished hand street by street.
-- **Add bots**: pick a style (rl, equity, rules, calling, random) and how many. They join
-  like anyone else, from the next hand if one is running, and wait a second before each
-  move (`--bot-delay`). Between hands the × on a bot's seat sends it away. Any person at the
-  table may add or remove these bots; bots that joined over the network cannot be removed.
+- **The host** is the first person to sit down (marked on their seat). Only the host deals,
+  adds bots, and sends someone away with the × on their seat (a bot at once, a person after
+  a question; a person in a hand folds). When the host leaves, or is away longer than the
+  grace period, the next person in seat order takes over. With only bots at the table,
+  anyone may deal.
+- **Add bots** (the host): pick a style (rl, equity, rules, calling, random) and how many.
+  They join like anyone else, from the next hand if one is running, and wait a second
+  before each move (`--bot-delay`).
 - English and Chinese; the button in the top right switches, and the choice is remembered.
 - Reloading the page or losing the connection takes your seat back by itself (the page keeps
   the token), and the hand log comes back with it. If that happens during a hand, your cards
@@ -89,8 +93,11 @@ start. (Bots in another terminal, `./thbot --bots 3`, still work as before; see 
   once every connected person agrees within 60 seconds. One "no", or the time running out,
   drops it. People who leave or are disconnected do not hold a vote up.
 - **Leave** gets up from the table: a hand you are in is folded (all-in, you stay in for
-  the showdown), the seat goes once the hand is over, and your chips go with you. The page
-  goes back to the name box; sitting down again starts from the starting chips.
+  the showdown) and the seat goes once the hand is over. The chips are kept for this game:
+  sitting down again with the same name from the same browser brings them back, and nobody
+  else can take that name. The results count people who left, with what they took.
+- **Buy in again**: a player out of chips gets the button. It adds the starting chips and
+  counts them as put in, so the results stay honest (a new name is a new buy-in too).
 
 How it works: the page is plain HTML, CSS and JavaScript in `web/`, no build step and no
 libraries. `thserver` serves those files itself on the web port and upgrades `/ws` to a
@@ -116,9 +123,12 @@ Client -> server
 {"type":"end_game"}   // stop and show the standings: alone with bots at once, otherwise a vote
 {"type":"new_game"}   // starting chips again, hand 1 next: same rule, no vote once the game is over
 {"type":"vote","agree":true}   // answer the open vote; every connected person must agree, one false drops it
-{"type":"leave"}      // get up: fold now if in a hand, the seat goes when it is over
-{"type":"add_bot","style":"rl","count":2}   // seat bots that the server plays itself
-{"type":"remove_bot","seat":3}              // between hands, send one of those bots away
+{"type":"leave"}      // get up: fold now if in a hand, the seat goes when it is over;
+                      // joining again with the same name and token brings the chips back
+{"type":"rebuy"}      // out of chips: the starting chips again, counted as bought in
+{"type":"add_bot","style":"rl","count":2}   // the host seats bots that the server plays itself
+{"type":"remove_bot","seat":3}              // the host, between hands: one of those bots goes
+{"type":"kick","seat":2}                    // the host sends someone away
 ```
 
 Server -> client
@@ -130,7 +140,10 @@ Server -> client
   the allowed actions with the raise range; also which seats are bots, `reconnect_in` for a
   seat whose player dropped out mid-hand, `solo` (ending or restarting needs nobody else),
   `vote` (`kind` end or new, `by`, `agreed`, `waiting`, `seconds_left`; null when none),
-  and after `end_game` `game_over` with `standings` (chips and net per player, best first)
+  `host` (the host's seat, -1 for none; only the host may `start`, add or remove bots and
+  `kick`), `starting_chips`, a seat's `rebuys`,
+  and after `end_game` `game_over` with `standings` (chips and net per player, best first;
+  people who left during the game are in it with `left: true`)
 - `event` - a line for the game log: `text` is ready to print ("Bob raises to 20",
   "Flop: Q♥ 8♥ 4♠"); `kind` and fields such as `name`, `amount`, `allin`, `cards`, `hand`
   say the same for clients that word it themselves (the web client, in two languages)
@@ -324,6 +337,11 @@ Tests have no external dependencies (`tests/test_framework.h`). They cover:
   freed when the hand is over, name not taken back meanwhile, the button kept), the server
   removing someone, and votes (everyone must agree, one no or 60 s drops it, a second ask
   counts as a yes, people who leave or drop out and people who join late)
+- the host and chips that stay with a person: the first person (not a bot) is host, only
+  they deal / add bots / kick, the host handed over on leaving or staying away but not on a
+  reload, anyone deals at a bots-only table; chips back after leaving (only with the token),
+  a seat given away keeping its owner's chips, people who left in the standings, buying in
+  again only when out of chips and counted against you
 - bots added from the page: names, styles, the move delay, 25 whole hands that add up, seats
   for the next hand, a full table, removal only between hands and only of those bots, the
   button passed on, no play once every person has left

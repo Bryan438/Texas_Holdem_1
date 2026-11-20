@@ -60,7 +60,15 @@ struct hand_result_entry{
 //     opens a vote (at once for a person alone with bots). Once the game is
 //     over, new_game needs no vote.
 //   {"type":"vote","agree":true}   answer the open vote; one "false" drops it
-//   {"type":"leave"}      get up: fold now if in a hand, the seat goes when it is over
+//   {"type":"leave"}      get up: fold now if in a hand, the seat goes when it is over.
+//                         The chips are kept for this game: joining again with the
+//                         same name and token brings them back.
+//   {"type":"rebuy"}      out of chips: buy in again for the starting chips
+//   {"type":"kick","seat":2}   the host removes someone from the table
+//   The host is the first person to sit down; when they leave, or stay away
+//   longer than the grace period, the next person in seat order takes over.
+//   Only the host deals ("start") and adds or removes bots. With no person at
+//   the table (bots only) anyone may deal.
 //   {"type":"add_bot","style":"rl","count":2}   a person seats bots that the server runs
 //   {"type":"remove_bot","seat":3}               between hands, one of those bots leaves
 //
@@ -144,6 +152,16 @@ class table: public observer{
 
     // A proposal to end or restart the game while other people are here:
     // it passes once every connected person agrees.
+    std::string host;                   // name of the person who deals; "" = nobody
+    // People who left during this game, with what they had: they get it back
+    // if they return (with their token), and the standings still count them.
+    struct departed_player{
+      std::string name, token;
+      int stack, buy_in;
+      bool bot;
+    };
+    std::vector<departed_player> departed;
+
     std::string vote_kind;              // "" = none, "end" or "new"
     std::string vote_by;
     std::vector<std::string> vote_yes;
@@ -159,6 +177,10 @@ class table: public observer{
     void handle_add_bot(int client, const json& msg);
     void handle_remove_bot(int client, const json& msg);
     void handle_vote(int client, const json& msg);
+    void handle_kick(int client, const json& msg);
+    void handle_rebuy(int client);
+    bool leads(int seat, int client, const std::string& what);
+    bool update_host();
 
     // Game flow
     bool start_hand();
@@ -180,7 +202,7 @@ class table: public observer{
     bool check_vote();
     bool votes(const player& p) const;
     void clear_vote();
-    void remove_player(int seat, bool kicked);
+    void remove_player(int seat, bool kicked, const std::string& by = "");
     void erase_seat(int seat);
     void purge_leavers();
     bool alone_with_bots(int seat) const;

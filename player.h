@@ -18,7 +18,8 @@ struct player{
   std::string style;        // a house bot's style: "rl", "equity", ...
   int buy_in = 0;           // chips at the start of this game, to tell who is up or down
   int64_t gone_since = 0;   // when the connection dropped (table clock); used while !connected
-  bool leaving = false;     // left (or was removed) during a hand: the seat goes when it is over
+  bool leaving = false;
+  int rebuys = 0;           // times this player bought back in after running out     // left (or was removed) during a hand: the seat goes when it is over
 
   // Disconnected during a hand: the cards are held until this time (table
   // clock, ms), then folded unless the player is back. 0 = not waiting.

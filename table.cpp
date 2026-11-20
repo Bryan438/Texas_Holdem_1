@@ -108,6 +108,12 @@ void table::on_message(int client, const std::string& line){
   else if(type == "leave"){
     remove_player(seat_of(client), false);
   }
+  else if(type == "kick"){
+    handle_kick(client, msg);
+  }
+  else if(type == "rebuy"){
+    handle_rebuy(client);
+  }
   else{
     send_error(client, "unknown message type: " + type, "bad_message");
   }
@@ -214,6 +220,41 @@ void table::handle_join(int client, const json& msg){
     }
   }
 
+  // Someone who left this game comes back to the chips they had, and only
+  // they can: the name stays theirs until a new game.
+  for(size_t i = 0; i < departed.size(); i++){
+    if(departed[i].name != name){
+      continue;
+    }
+    std::string token = msg.contains("token") && msg["token"].is_string() ? msg["token"].get<std::string>() : "";
+    if(token.empty() || token != departed[i].token){
+      send_error(client, "\"" + name + "\" left this game with chips; only their client can come back "
+                         "with that name (pick another one)", "name_left");
+      return;
+    }
+    departed_player back = departed[i];
+    departed.erase(departed.begin() + i);
+    int s = take_seat();
+    if(s < 0){
+      departed.push_back(back);
+      send_error(client, "the table is full", "table_full");
+      return;
+    }
+    player& p = *seats[s];
+    p.socket = client;
+    p.name = name;
+    p.stack = back.stack;
+    p.buy_in = back.buy_in;
+    p.bot = back.bot;
+    p.token = back.token;
+    send(client, {{"type", "welcome"}, {"seat", s}, {"name", name}, {"token", p.token}});
+    event(name + " is back with " + std::to_string(p.stack) + " chips" +
+          (current_stage == WAITING ? "" : " (plays from the next hand)"),
+          {{"kind", "returned"}, {"name", name}, {"amount", p.stack}, {"next_hand", current_stage != WAITING}});
+    broadcast_state();
+    return;
+  }
+
   int s = take_seat();
   if(s < 0){
     send_error(client, "the table is full", "table_full");
@@ -234,6 +275,9 @@ void table::handle_join(int client, const json& msg){
 }
 
 void table::handle_start(int client){
+  if(!leads(seat_of(client), client, "deal")){
+    return;
+  }
   if(game_over){
     // Dealing again after the game ended begins a new one, so that a client
     // that only knows "start" is never stuck. Bots do not decide that.
@@ -264,6 +308,8 @@ int table::take_seat(){
   if(current_stage == WAITING){
     for(size_t i = 0; i < seats.size(); i++){
       if(!seats[i]->connected){
+        const player& gone = *seats[i];
+        departed.push_back({gone.name, gone.token, gone.stack, gone.buy_in, gone.bot});
         seats[i].reset(new player());
         return i;
       }
@@ -289,6 +335,9 @@ void table::handle_add_bot(int client, const json& msg){
   const player& by = *seats[seat_of(client)];
   if(by.bot){
     send_error(client, "bots cannot add or remove bots", "bots_cannot");
+    return;
+  }
+  if(!leads(seat_of(client), client, "add bots")){
     return;
   }
   std::string style = msg.contains("style") && msg["style"].is_string() ? msg["style"].get<std::string>() : "rl";
@@ -332,6 +381,9 @@ void table::handle_remove_bot(int client, const json& msg){
   const player& by = *seats[seat_of(client)];
   if(by.bot){
     send_error(client, "bots cannot add or remove bots", "bots_cannot");
+    return;
+  }
+  if(!leads(seat_of(client), client, "remove bots")){
     return;
   }
   int s = msg.contains("seat") && msg["seat"].is_number_integer() ? msg["seat"].get<int>() : -1;
@@ -535,19 +587,23 @@ void table::end_game(const std::string& by, bool voted){
 // Get up from the table: a person who asked to, or anyone the server removes.
 // Between hands the seat goes at once. During a hand they fold (all-in, they
 // stay in for the showdown) and the seat goes once the hand is over.
-void table::remove_player(int s, bool kicked){
+void table::remove_player(int s, bool kicked, const std::string& by){
   player& p = *seats[s];
   const std::string name = p.name;
   if(p.connected && p.socket >= 0){
-    send(p.socket, {{"type", "left"}, {"reason", kicked ? "kicked" : "left"}});
+    json told = {{"type", "left"}, {"reason", kicked ? "kicked" : "left"}};
+    if(!by.empty()) told["by"] = by;
+    send(p.socket, told);
   }
   p.connected = false;
   p.socket = -1;
-  p.token.clear();
   p.away_until = 0;
-  p.leaving = true;
-  event(kicked ? name + " was removed by the server" : name + " left the table",
-        {{"kind", kicked ? "kicked" : "left"}, {"name", name}});
+  p.leaving = true;           // keeps the token: it brings the chips back later
+  json data = {{"kind", kicked ? "kicked" : "left"}, {"name", name}};
+  if(!by.empty()) data["by"] = by;
+  event(!kicked ? name + " left the table"
+                : by.empty() ? name + " was removed by the server" : name + " was removed by " + by,
+        data);
 
   if(current_stage == WAITING){
     erase_seat(s);
@@ -576,7 +632,96 @@ void table::remove_player(int s, bool kicked){
 // Take a seat away between hands. Everyone after it moves up one seat; the
 // button stays with the same player, or, if it was this seat's, goes on to
 // whoever sat after it.
+// The host deals and looks after the bots. With nobody to be host (bots
+// only), anyone may.
+bool table::leads(int s, int client, const std::string& what){
+  if(host.empty() || seats[s]->name == host){
+    return true;
+  }
+  send_error(client, "only the host (" + host + ") can " + what, "not_host");
+  return false;
+}
+
+// Keep a host while someone could be one: the host stays while they are here
+// or have just dropped out (a reloaded page); otherwise the first person in
+// seat order takes over. True when it changed.
+bool table::update_host(){
+  for(const auto& p : seats){
+    if(p->name == host && votes(*p)){
+      return false;
+    }
+  }
+  std::string next;
+  for(const auto& p : seats){
+    if(p->connected && !p->bot && !p->leaving){
+      next = p->name;
+      break;
+    }
+  }
+  if(next == host){
+    return false;
+  }
+  host = next;
+  if(!next.empty()){
+    event(next + " is now the host: they deal and look after the bots", {{"kind", "host"}, {"name", next}});
+  }
+  return true;
+}
+
+void table::handle_kick(int client, const json& msg){
+  int s = seat_of(client);
+  if(seats[s]->bot){
+    send_error(client, "bots cannot remove players", "bots_cannot");
+    return;
+  }
+  if(!leads(s, client, "remove players")){
+    return;
+  }
+  int target = msg.contains("seat") && msg["seat"].is_number_integer() ? msg["seat"].get<int>() : -1;
+  if(target < 0 || target >= (int)seats.size() || seats[target]->leaving){
+    send_error(client, "nobody to remove in that seat", "bad_seat");
+    return;
+  }
+  if(target == s){
+    send_error(client, "to get up yourself, leave", "kick_self");
+    return;
+  }
+  remove_player(target, true, seats[s]->name);
+}
+
+// Out of chips: buy in again. It counts as chips put in, so the standings
+// stay honest.
+void table::handle_rebuy(int client){
+  player& p = *seats[seat_of(client)];
+  if(p.bot){
+    send_error(client, "bots cannot buy in again", "bots_cannot");
+    return;
+  }
+  if(game_over){
+    send_error(client, "the game is over", "game_over");
+    return;
+  }
+  if(p.stack > 0){
+    send_error(client, "you still have chips: buying in again is for when they are gone", "has_chips");
+    return;
+  }
+  if(current_stage != WAITING && p.in_hand){
+    send_error(client, "wait until the hand is over", "hand_running");
+    return;
+  }
+  p.stack += config.starting_stack;
+  p.buy_in += config.starting_stack;
+  p.rebuys++;
+  event(p.name + " buys in again for " + std::to_string(config.starting_stack) + " chips",
+        {{"kind", "rebuy"}, {"name", p.name}, {"amount", config.starting_stack}});
+  broadcast_state();
+}
+
 void table::erase_seat(int s){
+  const player& p = *seats[s];
+  if(!p.house){
+    departed.push_back({p.name, p.token, p.stack, p.buy_in, p.bot});
+  }
   seats.erase(seats.begin() + s);
   if(dealer >= s){
     dealer--;
@@ -669,6 +814,7 @@ void table::reset_game(const std::string& by, bool voted){
   next_hand_at = 0;
   reveal_cards = false;
   game_over = false;
+  departed.clear();           // a new game: nobody has anything to come back to
   last_result.clear();
   std::string chips = std::to_string(config.starting_stack) + " chips";
   event(voted ? "Everyone agreed to a new game: everyone has " + chips
@@ -689,6 +835,15 @@ json table::standings() const{
   for(int i : order){
     const player& p = *seats[i];
     list.push_back({{"seat", i}, {"name", p.name}, {"bot", p.bot}, {"stack", p.stack}, {"net", p.stack - p.buy_in}});
+  }
+  // Those who left count too, with what they took with them.
+  for(const departed_player& d : departed){
+    json row = {{"seat", -1}, {"name", d.name}, {"bot", d.bot}, {"stack", d.stack},
+                {"net", d.stack - d.buy_in}, {"left", true}};
+    auto at = std::find_if(list.begin(), list.end(), [&](const json& r){
+      return r["net"].get<int>() < d.stack - d.buy_in;
+    });
+    list.insert(at, row);
   }
   return list;
 }
@@ -720,6 +875,10 @@ void table::tick(){
     std::string kind = vote_kind;
     clear_vote();
     event("Not everyone agreed in time: the game goes on", {{"kind", "vote_expired"}, {"vote", kind}});
+    broadcast_state();
+  }
+  // A host who has been gone longer than the time to come back hands over.
+  if(!host.empty() && update_host()){
     broadcast_state();
   }
   // Someone who dropped out may just have run out of time to come back.
@@ -1212,8 +1371,15 @@ json table::state_for(int viewer) const{
   st["big_blind"] = current_stage == WAITING ? -1 : big_blind_seat;
   st["turn"] = turn;
   st["blinds"] = {config.small_blind, config.big_blind};
+  st["starting_chips"] = config.starting_stack;
   st["game_over"] = game_over;
   st["solo"] = alone_with_bots(viewer);   // ending or restarting needs nobody else's yes
+  st["host"] = -1;
+  for(size_t i = 0; i < seats.size(); i++){
+    if(!host.empty() && seats[i]->name == host && !seats[i]->leaving){
+      st["host"] = (int)i;
+    }
+  }
   if(vote_kind.empty()){
     st["vote"] = nullptr;
   }
@@ -1269,8 +1435,11 @@ json table::state_for(int viewer) const{
 
     json s = {{"seat", (int)i}, {"name", p.name}, {"stack", p.stack}, {"bet", p.round_bet},
               {"total_bet", p.total_bet}, {"status", status}, {"bot", p.bot}};
+    if(p.rebuys > 0){
+      s["rebuys"] = p.rebuys;
+    }
     if(p.house){
-      s["house"] = true;     // run by the server: a person may remove it between hands
+      s["house"] = true;     // run by the server: the host may remove it between hands
       s["style"] = p.style;
     }
     if(p.away_until > 0){
@@ -1327,6 +1496,7 @@ json table::state_for(int viewer) const{
 }
 
 void table::broadcast_state(){
+  update_host();
   for(size_t i = 0; i < seats.size(); i++){
     if(seats[i]->connected){
       send(seats[i]->socket, state_for(i));
