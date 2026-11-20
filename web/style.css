@@ -393,3 +393,7 @@ button.small { padding: 5px 10px; font-size: 13px; font-weight: 500; }
   .bar { gap: 8px 10px; padding: 8px 12px; flex-wrap: wrap; }
   .tag { display: none; }
 }
+
+/* The host's seat, and people in the results who left before the end */
+.badge.host { background: var(--gold); color: #1d1a10; }
+.nets tr.gone td { color: var(--muted); }

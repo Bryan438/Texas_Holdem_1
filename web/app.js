@@ -172,16 +172,14 @@ function onMessage(m) {
   else if (m.type === 'left') {
     // Up from the table (by choice, or the server removed us): back to the
     // name box, and a reload must not sit down again.
-    const name = S.wantName;
     S.joined = false;
     S.state = null;
     S.wantName = '';
     S.wasOver = false;
-    S.joinError = m.reason === 'kicked' ? { text: t('left.kicked') } : null;
-    try {
-      sessionStorage.removeItem('th.name');
-      if (name) localStorage.removeItem(tokenKey(name));
-    } catch { /* nothing to forget */ }
+    S.joinError = m.reason !== 'kicked' ? null
+                : { text: m.by ? t('left.kicked.by', { by: m.by }) : t('left.kicked') };
+    // The token is kept: sitting down again under this name brings the chips back.
+    try { sessionStorage.removeItem('th.name'); } catch { /* nothing to forget */ }
     for (const dialog of document.querySelectorAll('dialog[open]')) dialog.close();
     renderScreen();
   }
@@ -296,6 +294,9 @@ function renderSeats(st) {
     }
 
     const badges = [];
+    if (st.host === seat.seat) {
+      badges.push(el('span', { class: 'badge host', title: t('badge.host.label') }, t('badge.host')));
+    }
     if (st.hand > 0 && st.dealer === seat.seat) {
       badges.push(el('span', { class: 'badge', title: t('badge.dealer.label') }, t('badge.dealer')));
     }
@@ -308,11 +309,13 @@ function renderSeats(st) {
 
     const turn = st.turn === seat.seat;
     const classes = ['seat', mine && 'me', turn && 'turn', winners.includes(seat.seat) && 'winner', out && 'out'];
-    // A bot added from a page may be sent away between hands.
-    const remove = seat.house && !live
-      ? el('button', { class: 'remove', type: 'button', title: t('bots.remove', { name: seat.name }),
-                       'aria-label': t('bots.remove', { name: seat.name }),
-                       onclick: () => send({ type: 'remove_bot', seat: seat.seat }) }, '×')
+    // The host may send anyone else away: a bot at once, a person after asking.
+    const kick = () => send({ type: 'kick', seat: seat.seat });
+    const remove = st.host === st.you && !mine && seat.status !== 'left'
+      ? el('button', { class: 'remove', type: 'button', title: t('kick.label', { name: seat.name }),
+                       'aria-label': t('kick.label', { name: seat.name }),
+                       onclick: () => (seat.bot ? kick() : confirmThen(t('confirm.kick', { name: seat.name }), t('kick.label', { name: seat.name }), kick)) },
+           '×')
       : null;
     nodes.push(el('div', { class: classes.filter(Boolean).join(' '), 'data-seat': seat.seat, style: `left:${at.x}%;top:${at.y}%` },
       remove,
@@ -405,16 +408,29 @@ function renderActions(st) {
     return;
   }
 
+  // Out of chips: buy in again (it counts against you in the results).
+  const busted = me && me.stack === 0 && !(st.stage !== 'waiting' && ['active', 'allin'].includes(me.status));
+  const rebuy = busted
+    ? el('button', { class: 'primary', type: 'button', onclick: () => send({ type: 'rebuy' }) },
+         t('rebuy', { n: formatChips(st.starting_chips || 0) }))
+    : null;
+
   if (st.stage === 'waiting') {
     const ready = st.seats.filter((seat) => seat.status === 'ready').length;
+    // Only the host deals and adds bots (anyone, when there is no host).
+    const leads = st.host == null || st.host < 0 || st.host === st.you;
+    const host = st.seats[st.host];
     const line = st.next_hand_in != null ? el('div', { class: 'status-line', 'data-countdown': true })
-               : ready < 2 ? el('div', { class: 'status-line' }, t(me && me.status === 'busted' ? 'start.busted' : 'start.need'))
+               : busted ? el('div', { class: 'status-line' }, t('start.busted'))
+               : ready < 2 ? el('div', { class: 'status-line' }, t('start.need'))
+               : !leads && host ? el('div', { class: 'status-line' }, t('start.host', { name: host.name }))
                : null;
     fill(box, line, el('div', { class: 'buttons' },
-      el('button', { class: 'primary', type: 'button', disabled: ready < 2, onclick: () => send({ type: 'start' }) },
-         t(st.hand > 0 ? 'start.next' : 'start')),
+      rebuy,
+      leads ? el('button', { class: rebuy ? '' : 'primary', type: 'button', disabled: ready < 2, onclick: () => send({ type: 'start' }) },
+                 t(st.hand > 0 ? 'start.next' : 'start')) : null,
       // Alone at the table, adding a bot is the next step: that button leads then.
-      el('button', { class: ready < 2 ? 'primary' : '', type: 'button', onclick: showAddBots }, t('bots.add'))));
+      leads ? el('button', { class: ready < 2 && !rebuy ? 'primary' : '', type: 'button', onclick: showAddBots }, t('bots.add')) : null));
     return;
   }
 
@@ -422,7 +438,7 @@ function renderActions(st) {
     const who = st.seats[st.turn];
     const words = me && me.status === 'sitting_out' ? t('turn.watching')
                 : who ? t('turn.other', { name: who.name }) : t('turn.none');
-    fill(box, el('div', { class: 'status-line' }, words));
+    fill(box, el('div', { class: 'status-line' }, words), rebuy ? el('div', { class: 'buttons' }, rebuy) : null);
     return;
   }
 
@@ -550,9 +566,10 @@ function renderSummary() {
 function renderStandings() {
   const st = S.state;
   if (!st || !st.standings) return;
-  const rows = st.standings.map((row) => el('tr', {},
+  const rows = st.standings.map((row) => el('tr', { class: row.left ? 'gone' : null },
     el('td', {}, row.seat === st.you ? `${row.name} (${t('you')})` : row.name,
-       row.bot && el('span', { class: 'tag' }, t('bot.tag'))),
+       row.bot && el('span', { class: 'tag' }, t('bot.tag')),
+       row.left && el('span', { class: 'tag' }, t('standings.left'))),
     el('td', { class: 'chips' }, formatChips(row.stack)),
     el('td', { class: row.net > 0 ? 'up' : row.net < 0 ? 'down' : '' }, (row.net > 0 ? '+' : '') + formatChips(row.net))));
   fill($('standings'),

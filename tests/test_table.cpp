@@ -274,7 +274,7 @@ TEST(table_disconnect_and_reconnect_with_token){
   CHECK(h.last(500, "welcome")["token"] == token);
   CHECK_EQ(h.t.seat(1).stack, 198);           // chips kept
   CHECK_EQ(h.t.seat_count(), 2);
-  h.send(500, {{"type", "start"}});
+  h.start();                                  // P0 is the host and deals
   CHECK_EQ(h.t.get_stage(), PREFLOP);
 }
 

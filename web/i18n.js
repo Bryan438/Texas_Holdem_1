@@ -30,6 +30,8 @@ const STRINGS = {
     'badge.dealer.label': 'Dealer',
     'badge.small_blind.label': 'Small blind',
     'badge.big_blind.label': 'Big blind',
+    'badge.host': 'Host',
+    'badge.host.label': 'The host deals and looks after the bots',
     'status.folded': 'Folded',
     'status.allin': 'All-in',
     'status.sitting_out': 'Plays next hand',
@@ -52,6 +54,12 @@ const STRINGS = {
     'vote.agree': 'Agree',
     'vote.decline': 'No, keep playing',
     'left.kicked': 'The server removed you from the table. You can sit down again.',
+    'left.kicked.by': '{by} removed you from the table. You can sit down again.',
+    'kick.label': 'Remove {name} from the table',
+    'confirm.kick': 'Remove {name} from the table? If they are in a hand, they fold.',
+    'standings.left': 'left',
+    'rebuy': 'Buy in again ({n})',
+    'start.host': 'Waiting for {name}, the host, to deal',
     'over.title': 'Game over',
     'over.line': 'This game is over.',
     'over.show': 'Show results',
@@ -131,6 +139,11 @@ const STRINGS = {
     'event.new_game.vote': 'Everyone agreed to a new game: everyone has {amount} chips',
     'event.left': '{name} left the table',
     'event.kicked': '{name} was removed by the server',
+    'event.kicked.by': '{name} was removed by {by}',
+    'event.host': '{name} is now the host: they deal and look after the bots',
+    'event.returned': '{name} is back with {amount} chips',
+    'event.returned.next': '{name} is back with {amount} chips (plays from the next hand)',
+    'event.rebuy': '{name} buys in again for {amount} chips',
     'event.fold.left': '{name} folds (left the table)',
     'event.fold.kicked': '{name} folds (removed)',
     'event.vote_started.end': '{name} wants to end the game: everyone at the table must agree within {seconds} s',
@@ -188,6 +201,11 @@ const STRINGS = {
     'error.no_vote': 'There is no vote to answer.',
     'error.bad_style': 'Unknown kind of bot.',
     'error.not_house_bot': 'Only bots added from this page can be removed.',
+    'error.not_host': 'Only the host can do that.',
+    'error.name_left': 'A player who left this game uses that name. Pick another one.',
+    'error.kick_self': 'To get up yourself, press Leave.',
+    'error.bad_seat': 'Nobody to remove in that seat.',
+    'error.has_chips': 'You still have chips.',
   },
   zh: {
     'title': '德州扑克',
@@ -215,6 +233,8 @@ const STRINGS = {
     'badge.dealer.label': '庄家',
     'badge.small_blind.label': '小盲',
     'badge.big_blind.label': '大盲',
+    'badge.host': '房主',
+    'badge.host.label': '房主负责发牌和管理机器人',
     'status.folded': '已弃牌',
     'status.allin': '全下',
     'status.sitting_out': '下一手参与',
@@ -237,6 +257,12 @@ const STRINGS = {
     'vote.agree': '同意',
     'vote.decline': '不同意，继续打',
     'left.kicked': '你被服务器移出了牌桌，可以重新坐下。',
+    'left.kicked.by': '{by} 把你移出了牌桌，可以重新坐下。',
+    'kick.label': '把 {name} 移出牌桌',
+    'confirm.kick': '把 {name} 移出牌桌？如果他正在打这一手，会直接弃牌。',
+    'standings.left': '已离开',
+    'rebuy': '补码（{n}）',
+    'start.host': '等待房主 {name} 发牌',
     'over.title': '牌局结束',
     'over.line': '这一场已经结束。',
     'over.show': '查看战绩',
@@ -316,6 +342,11 @@ const STRINGS = {
     'event.new_game.vote': '全员同意重新开始：每人 {amount} 筹码',
     'event.left': '{name} 离开了牌桌',
     'event.kicked': '{name} 被服务器移出了牌桌',
+    'event.kicked.by': '{name} 被 {by} 移出了牌桌',
+    'event.host': '{name} 现在是房主：负责发牌和管理机器人',
+    'event.returned': '{name} 回来了，带着 {amount} 筹码',
+    'event.returned.next': '{name} 回来了，带着 {amount} 筹码（下一手参与）',
+    'event.rebuy': '{name} 补码 {amount}',
     'event.fold.left': '{name} 弃牌（离开牌桌）',
     'event.fold.kicked': '{name} 弃牌（被移出）',
     'event.vote_started.end': '{name} 提议结束牌局：桌上所有人需在 {seconds} 秒内同意',
@@ -373,6 +404,11 @@ const STRINGS = {
     'error.no_vote': '现在没有需要表态的投票。',
     'error.bad_style': '没有这种机器人。',
     'error.not_house_bot': '只能移除从网页添加的机器人。',
+    'error.not_host': '只有房主可以这样做。',
+    'error.name_left': '这个名字属于这一场里已经离开的玩家，请换一个名字。',
+    'error.kick_self': '自己要走请点"离开"。',
+    'error.bad_seat': '这个座位上没有可以移出的人。',
+    'error.has_chips': '你还有筹码。',
   },
 };
 
@@ -397,7 +433,8 @@ export function handName(lang, hand) {
 export function eventKey(event) {
   if (!event || typeof event.kind !== 'string') return null;
   let key = 'event.' + event.kind;
-  if ((event.kind === 'joined' || event.kind === 'bot_added') && event.next_hand) key += '.next';
+  if (['joined', 'bot_added', 'returned'].includes(event.kind) && event.next_hand) key += '.next';
+  else if (event.kind === 'kicked' && event.by) key += '.by';
   else if (event.kind === 'disconnected' && event.grace) key += '.grace';
   else if (event.kind === 'win' && event.hand) key += '.hand';
   else if ((event.kind === 'fold' || event.kind === 'check') && event.reason) key += '.' + event.reason;
