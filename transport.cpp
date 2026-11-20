@@ -1,3 +1,4 @@
+#include <cerrno>
 #include <cstdio>
 #include <cstring>
 #include <fstream>
@@ -59,7 +60,12 @@ static int listen_on(int port){
   addr.sin_port = htons(port);
 
   if(bind(fd, (struct sockaddr*)&addr, sizeof(addr)) < 0){
-    printf("Bind failed (is port %d already in use?)\n", port);
+    if(errno == EADDRINUSE){
+      printf("Port %d is already in use: is another thserver still running?\n", port);
+    }
+    else{
+      printf("Cannot use port %d: %s\n", port, strerror(errno));
+    }
     close(fd);
     return -1;
   }
@@ -107,9 +113,16 @@ int transport::start_server(int port){
   return 0;
 }
 
-void transport::start_with_thread(int port){
-  std::thread t(&transport::start_server, this, port);
-  t.detach();
+// Open the port here, so a port that is taken is reported to the caller
+// instead of silently ending a background thread.
+bool transport::start_with_thread(int port){
+  sockfd = listen_on(port);
+  if(sockfd == -1){
+    return false;
+  }
+  printf("Listening on port %d\n", port);
+  std::thread(&transport::accept_loop, this, sockfd, false).detach();
+  return true;
 }
 
 int transport::start_web_server(int port, const std::string& root){
@@ -122,9 +135,14 @@ int transport::start_web_server(int port, const std::string& root){
   return 0;
 }
 
-void transport::start_web_with_thread(int port, const std::string& root){
-  std::thread t(&transport::start_web_server, this, port, root);
-  t.detach();
+bool transport::start_web_with_thread(int port, const std::string& root){
+  web_sockfd = listen_on(port);
+  if(web_sockfd == -1){
+    return false;
+  }
+  web_root = root;
+  std::thread(&transport::accept_loop, this, web_sockfd, true).detach();
+  return true;
 }
 
 void transport::read_with_thread(int client_socket){

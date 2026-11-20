@@ -36,14 +36,16 @@ class transport: public sender{
     static transport* get_instance();
 
     int start_server(int port);
-    void start_with_thread(int port);
+    // Open the port, then accept in the background. False: the port could not
+    // be opened (the reason is printed).
+    bool start_with_thread(int port);
     void read_with_thread(int client_socket);
     void read(int client_socket);
     void disconnect();
 
     // Browsers: serve the files in `root` and accept WebSocket connections.
     int start_web_server(int port, const std::string& root);
-    void start_web_with_thread(int port, const std::string& root);
+    bool start_web_with_thread(int port, const std::string& root);
     void set_web_root(const std::string& root){ web_root = root; }
     // One browser connection: answers a file request, or becomes a WebSocket.
     void serve_http(int client_socket);
