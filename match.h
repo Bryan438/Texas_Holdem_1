@@ -7,6 +7,8 @@
 #include "bot.h"
 #include "observer.h"
 
+class rl_model;
+
 // Bots playing each other on a real table, in one process with no network:
 // each bot gets the same state messages a networked player would get.
 struct match_options{
@@ -14,6 +16,10 @@ struct match_options{
   int chips = 200;        // every bot starts every hand with this many chips
   unsigned seed = 1;      // same seed, same cards and same bot choices
   std::string history_path;   // also save the hands here ("" = don't)
+  // Per seat, optional: the network an RL seat plays with (null or missing:
+  // the one in use), and a name instead of "<style>-<seat>".
+  std::vector<const rl_model*> models;
+  std::vector<std::string> names;
 };
 
 struct match_seat{

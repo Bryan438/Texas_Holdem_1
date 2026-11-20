@@ -14,7 +14,8 @@ THENV = os.path.join(HERE, "..", "thenv")
 
 
 class PokerVecEnv:
-    def __init__(self, num_envs, num_procs=8, seed=1, opponents="equity", players="2", model=None, binary=THENV):
+    def __init__(self, num_envs, num_procs=8, seed=1, opponents="equity", players="2", model=None, pool=None,
+                 binary=THENV):
         if not os.path.exists(binary):
             raise SystemExit(f"{binary} not found: run `make` in the repository first")
         num_procs = max(1, min(num_procs, num_envs))
@@ -27,6 +28,8 @@ class PokerVecEnv:
                        "--opponents", opponents, "--players", players]
             if model:
                 command += ["--model", model]
+            if pool:   # networks the "rl" opponents are drawn from, one per seat and hand
+                command += ["--pool", ",".join(pool)]
             self.procs.append(subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE))
         for proc, size in zip(self.procs, sizes):
             words = proc.stdout.readline().split()

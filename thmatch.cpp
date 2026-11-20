@@ -1,6 +1,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <deque>
 #include <string>
 #include <vector>
 #include "match.h"
@@ -19,8 +20,10 @@ static void usage(const char* program){
          "  --history FILE also save the hands here, for thstats\n"
          "  --model FILE   the network the \"rl\" style plays with, from rl/train.py\n"
          "                 (default: the one built into this program)\n\n"
+         "A seat written rl=FILE plays with that network, so that two versions can\n"
+         "play each other: %s rl=rl/models/new.txt rl=rl/models/old.txt\n\n"
          "Example: %s --hands 5000 rules calling random\n",
-         program, bot_style_list(), program);
+         program, bot_style_list(), program, program);
 }
 
 static bool read_number(const char* text, int& out){
@@ -35,6 +38,7 @@ int main(int argc, char* argv[]){
   match_options options;
   options.hands = 2000;
   std::vector<bot_style> styles;
+  std::deque<rl_model> loaded;    // networks named on the command line (rl=FILE)
   for(int i = 1; i < argc; i++){
     std::string arg = argv[i];
     bool has_value = i + 1 < argc;
@@ -62,6 +66,23 @@ int main(int argc, char* argv[]){
         return 1;
       }
     }
+    else if(arg.rfind("rl=", 0) == 0){
+      std::string path = arg.substr(3), error;
+      loaded.emplace_back();
+      if(!loaded.back().load_file(path, error)){
+        printf("%s\n", error.c_str());
+        return 1;
+      }
+      // Name the seat after the file: models/sp-gen12.txt -> sp-gen12-3
+      std::string stem = path.substr(path.find_last_of('/') + 1);
+      stem = stem.substr(0, stem.rfind('.'));
+      std::string name = stem.substr(0, 16) + "-" + std::to_string(styles.size() + 1);
+      options.models.resize(styles.size() + 1, nullptr);
+      options.names.resize(styles.size() + 1);
+      options.models[styles.size()] = &loaded.back();
+      options.names[styles.size()] = name;
+      styles.push_back(bot_style::RL);
+    }
     else{
       bot_style style;
       if(!parse_bot_style(arg, style)){
@@ -87,11 +108,11 @@ int main(int argc, char* argv[]){
 
   printf("%d hands, %zu bots, every hand starts at %d chips (%d big blinds), seed %u\n\n",
          result.hands, styles.size(), options.chips, options.chips / result.big_blind, options.seed);
-  printf("%-12s %8s %10s %9s %6s %6s\n", "Bot", "Net", "bb/100", "+/-95%", "VPIP", "PFR");
+  printf("%-20s %8s %10s %9s %6s %6s\n", "Bot", "Net", "bb/100", "+/-95%", "VPIP", "PFR");
   for(const match_seat& seat : result.seats){
     const player_stats& s = stats[seat.name];
     auto percent = [&](int part){ return s.hands ? (int)(100.0 * part / s.hands + 0.5) : 0; };
-    printf("%-12s %+8lld %+10.1f %9.1f %5d%% %5d%%\n", seat.name.c_str(), seat.net,
+    printf("%-20s %+8lld %+10.1f %9.1f %5d%% %5d%%\n", seat.name.c_str(), seat.net,
            bb_per_100(seat, result), bb_per_100_margin(seat, result), percent(s.vpip), percent(s.pfr));
   }
   printf("\nbb/100: big blinds won per 100 hands. +/-95%%: 95%% confidence interval;\n"

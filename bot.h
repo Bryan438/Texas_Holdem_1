@@ -9,6 +9,8 @@
 
 using json = nlohmann::json;
 
+class rl_model;   // rl_policy.h
+
 // How a bot plays. A bot decides only from the "state" message the server
 // sends to its seat, so it sees exactly what a person in that seat would see.
 enum class bot_style{
@@ -32,7 +34,9 @@ struct bot_move{
 
 // The move for seat state["you"]. The state must hold "actions", i.e. it is
 // that seat's turn; the move is always one of the allowed actions.
-bot_move decide(const json& state, bot_style style, std::mt19937& rng);
+// `model` is the network an RL bot plays with (null: the one in use, see
+// rl_current_model), so that different versions can sit at one table.
+bot_move decide(const json& state, bot_style style, std::mt19937& rng, const rl_model* model = nullptr);
 
 // ---------------------------------------------------------------- building blocks
 // Exposed for the tests and for the learned bot.

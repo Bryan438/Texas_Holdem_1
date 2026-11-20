@@ -376,7 +376,7 @@ bot_move decide_equity(const bot_view& v, std::mt19937& rng){
 
 }  // namespace
 
-bot_move decide(const json& state, bot_style style, std::mt19937& rng){
+bot_move decide(const json& state, bot_style style, std::mt19937& rng, const rl_model* chosen){
   if(!state.contains("actions") || !state["actions"].is_object()){
     return {"check", 0};
   }
@@ -394,7 +394,7 @@ bot_move decide(const json& state, bot_style style, std::mt19937& rng){
       if(v.hole.size() != 2) return check_or_fold(v);
       return decide_equity(v, rng);
     case bot_style::RL:{
-      const rl_model* model = rl_current_model();
+      const rl_model* model = chosen ? chosen : rl_current_model();
       if(v.hole.size() != 2 || model == nullptr) return check_or_fold(v);
       return rl_move(v, rl_choose(*model, rl_observe(v, rng), rng));
     }
