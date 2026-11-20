@@ -220,3 +220,59 @@ TEST(rl_built_in_model_plays_legal_moves_and_beats_the_baselines){
   r = run_match({bot_style::RL, bot_style::CALLING}, options);
   CHECK(bb_per_100(r.seats[0], r) - bb_per_100_margin(r.seats[0], r) > 0);
 }
+
+// ---------------------------------------------------------------- several versions at one table
+
+TEST(rl_seats_can_play_different_networks){
+  auto calls = std::make_shared<rl_model>(), shoves = std::make_shared<rl_model>();
+  std::string error;
+  CHECK(calls->parse(one_layer_model({0, 50, 0, 0, 0}), error));     // always check or call
+  CHECK(shoves->parse(one_layer_model({0, 0, 0, 0, 50}), error));    // all in whenever it may
+
+  // decide() plays the network it is given.
+  std::mt19937 rng(5);
+  json st = {{"type", "state"}, {"you", 0}, {"stage", "flop"}, {"pot", 20}, {"current_bet", 0},
+             {"blinds", {1, 2}}, {"board", {"Kh", "9c", "2d"}}, {"dealer", 1}, {"small_blind", 1}, {"big_blind", 0},
+             {"seats", {{{"seat", 0}, {"stack", 190}, {"bet", 0}, {"total_bet", 10}, {"status", "active"}, {"cards", {"7d", "2c"}}},
+                        {{"seat", 1}, {"stack", 190}, {"bet", 0}, {"total_bet", 10}, {"status", "active"}, {"cards", nullptr}}}},
+             {"actions", {{"fold", true}, {"check", true}, {"call", 0}, {"raise", {{"min", 2}, {"max", 190}}}}}};
+  CHECK(decide(st, bot_style::RL, rng, calls.get()).action == "check");
+  bot_move shove = decide(st, bot_style::RL, rng, shoves.get());
+  CHECK(shove.action == "raise" && shove.amount == 190);
+
+  // In a match each seat keeps its own network.
+  match_options options;
+  options.hands = 200;
+  options.models = {calls.get(), shoves.get()};
+  options.names = {"caller", ""};
+  match_result r = run_match({bot_style::RL, bot_style::RL}, options);
+  CHECK_EQ(r.illegal_moves, 0);
+  CHECK(r.seats[0].name == "caller" && r.seats[1].name == "rl-2");
+  int caller_raises = 0, shover_all_ins = 0;
+  for(const json& hand : r.records){
+    for(const json& a : hand["actions"]){
+      if(a["seat"] == 0 && (a["action"] == "raise" || a["action"] == "bet")) caller_raises++;
+      if(a["seat"] == 1 && a.value("allin", false)) shover_all_ins++;
+    }
+  }
+  CHECK_EQ(caller_raises, 0);
+  CHECK(shover_all_ins > 100);
+
+  // Training tables draw a network from the pool for each "rl" opponent, every hand.
+  rl_env_options env_options;
+  env_options.seed = 3;
+  env_options.opponents = {{bot_style::RL, 1}};
+  env_options.pool = {calls, shoves};
+  rl_env env(env_options);
+  std::mt19937 pick(9);
+  int learner_folds = 0;
+  for(int i = 0; i < 600; i++){
+    const rl_observation& seen = env.observation();
+    // Facing an all-in (only fold or call allowed) happens only against the shover.
+    if(seen.allowed[RL_FOLD] && !seen.allowed[RL_RAISE_HALF] && !seen.allowed[RL_ALL_IN]) learner_folds++;
+    env.step(seen.allowed[RL_CALL] && pick() % 2 ? RL_CALL : RL_FOLD);
+  }
+  CHECK_EQ(env.illegal_moves(), 0);
+  CHECK(learner_folds > 20);                     // met the shover
+  CHECK(env.hands_played() > 150);               // and hands went on: not every one was a shove
+}

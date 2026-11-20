@@ -28,6 +28,8 @@ static void usage(const char* program){
           "  --opponents LIST  styles to draw the opponents from, with weights:\n"
           "                    equity:3,rules:1 (default equity). Styles: %s\n"
           "  --model FILE      the network that \"rl\" opponents use\n"
+          "  --pool F1,F2,...  networks for \"rl\" opponents: one is drawn per seat\n"
+          "                    every hand (training against earlier versions)\n"
           "  --chips N         chips every seat starts every hand with (default 200)\n"
           "  --seed N          same seed, same cards (default 1)\n",
           program, bot_style_list());
@@ -73,6 +75,17 @@ int main(int argc, char* argv[]){
         options.opponents.push_back({style, pair.size() > 1 ? atoi(pair[1].c_str()) : 1});
       }
     }
+    else if(arg == "--pool"){
+      for(const std::string& path : split(value, ',')){
+        auto model = std::make_shared<rl_model>();
+        std::string error;
+        if(!model->load_file(path, error)){
+          fprintf(stderr, "%s\n", error.c_str());
+          return 1;
+        }
+        options.pool.push_back(model);
+      }
+    }
     else if(arg == "--model"){
       std::string error;
       if(!rl_use_model_file(value, error)){
@@ -90,7 +103,7 @@ int main(int argc, char* argv[]){
     return 1;
   }
   for(const auto& choice : options.opponents){
-    if(choice.first == bot_style::RL && rl_current_model() == nullptr){
+    if(choice.first == bot_style::RL && options.pool.empty() && rl_current_model() == nullptr){
       fprintf(stderr, "\"rl\" opponents need a trained network: pass --model FILE\n");
       return 1;
     }

@@ -19,6 +19,9 @@ struct rl_env_options{
   // Styles the opponents are drawn from before every hand, with how often
   // each is picked (equity 3, rules 1: three hands in four against equity).
   std::vector<std::pair<bot_style, int>> opponents = {{bot_style::EQUITY, 1}};
+  // Networks "rl" opponents play with: one is drawn for each such seat every
+  // hand (self-play against earlier versions). Empty: the one in use.
+  std::vector<std::shared_ptr<const rl_model>> pool;
 };
 
 struct rl_step{
@@ -49,6 +52,7 @@ class rl_env{
     std::unique_ptr<table> game;
     std::mt19937 rng;
     std::vector<bot_style> styles;   // who plays each seat this hand (seat 0: unused)
+    std::vector<const rl_model*> models;   // and with which network, for "rl" seats
     int total_weight = 0;
     bot_view view;
     rl_observation seen;

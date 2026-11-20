@@ -14,6 +14,14 @@ Run it from this folder, after `make` in the repository:
     python train.py                              # about 3 million decisions
     python train.py --total-timesteps 500000     # a quick try
     ../thmatch --model models/rl.txt --hands 20000 rl equity
+
+Self-play: with --self-play, "rl" opponents play earlier versions of the
+learner itself. Every --snapshot-every updates the network is saved to
+--pool-dir, and the opponents are drawn from the latest --pool-size of those
+(plus any --pool-anchor networks, which always stay in).
+
+    python train.py --self-play --start-from models/mix2.pt --pool-anchor models/mix2.txt \
+        --opponents equity:4,rules:2,calling:1,random:1,rl:8 --out models/sp
 """
 import os
 import time
@@ -47,6 +55,16 @@ class Args:
     """also write ../rl_model_data.cpp, so the next `make` builds this network into thbot and thmatch"""
     num_procs: int = 8
     """thenv processes to run side by side"""
+    self_play: bool = False
+    """"rl" opponents play earlier versions of the learner (add rl:WEIGHT to --opponents)"""
+    pool_dir: str = os.path.join(HERE, "models", "pool")
+    """where the earlier versions are saved"""
+    snapshot_every: int = 20
+    """updates between two saved versions"""
+    pool_size: int = 8
+    """how many of the latest versions the opponents are drawn from"""
+    pool_anchor: str = ""
+    """networks (.txt, comma separated) that always stay in the pool"""
     hidden: int = 64
     """neurons per hidden layer"""
 
@@ -132,6 +150,26 @@ def model_text(agent, num_features, num_actions):
     return "\n".join(lines) + "\n"
 
 
+class Pool:
+    """Earlier versions of the learner, for "rl" opponents to play with."""
+
+    def __init__(self, args):
+        self.dir = args.pool_dir
+        self.size = args.pool_size
+        self.anchors = [a for a in args.pool_anchor.split(",") if a]
+        self.versions = []
+        os.makedirs(self.dir, exist_ok=True)
+
+    def add(self, agent, num_features, num_actions):
+        path = os.path.join(self.dir, f"gen{len(self.versions):03d}.txt")
+        with open(path, "w") as f:
+            f.write(model_text(agent, num_features, num_actions))
+        self.versions.append(path)
+
+    def files(self):
+        return self.anchors + self.versions[-self.size:]
+
+
 def save(agent, args, num_features, num_actions):
     os.makedirs(os.path.dirname(args.out), exist_ok=True)
     text = model_text(agent, num_features, num_actions)
@@ -157,12 +195,25 @@ if __name__ == "__main__":
     torch.set_num_threads(4)
     device = torch.device("cpu")   # the network is tiny: the tables are the slow part
 
-    envs = PokerVecEnv(args.num_envs, args.num_procs, args.seed, args.opponents, args.players,
-                       args.opponent_model or None)
+    def open_tables(round_number, pool_files):
+        # A new seed each time, or the tables would deal the same cards again.
+        return PokerVecEnv(args.num_envs, args.num_procs, args.seed * 1000 + round_number, args.opponents,
+                           args.players, args.opponent_model or None, pool_files)
+
+    pool = Pool(args) if args.self_play else None
+    if args.self_play and "rl" not in [part.split(":")[0] for part in args.opponents.split(",")]:
+        raise SystemExit("--self-play needs rl opponents: add for example rl:8 to --opponents")
+    # The tables are opened once to learn the sizes; with self-play they are
+    # opened again below, once the first version is in the pool.
+    envs = open_tables(0, args.pool_anchor.split(",") if args.pool_anchor else None)
     num_features, num_actions = envs.num_features, envs.num_actions
     agent = Agent(num_features, num_actions, args.hidden).to(device)
     if args.start_from:
         agent.load_state_dict(torch.load(args.start_from))
+    if pool:
+        pool.add(agent, num_features, num_actions)
+        envs.close()
+        envs = open_tables(1, pool.files())
     optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
 
     # ALGO Logic: Storage setup
@@ -181,7 +232,8 @@ if __name__ == "__main__":
     next_allowed = torch.from_numpy(first_allowed.copy())
     next_done = torch.zeros(args.num_envs)
     recent = []   # (big blinds won, hands) of the last iterations, for a steadier score
-    print(f"{num_iterations} updates of {batch_size} decisions, against {args.opponents}, {args.players} players")
+    print(f"{num_iterations} updates of {batch_size} decisions, against {args.opponents}, {args.players} players"
+          + (f", self-play: a new version every {args.snapshot_every} updates" if pool else ""))
 
     for iteration in range(1, num_iterations + 1):
         if args.anneal_lr:
@@ -279,6 +331,19 @@ if __name__ == "__main__":
                   f"{int(global_step / (time.time() - start_time))} a second", flush=True)
         if iteration % 25 == 0 or iteration == num_iterations:
             save(agent, args, num_features, num_actions)
+
+        # Self-play: the learner as it is now joins the pool, and the tables are
+        # opened again so the opponents draw from the new pool. Hands in progress
+        # are dropped; the next rollout starts on fresh tables.
+        if pool and iteration % args.snapshot_every == 0 and iteration < num_iterations:
+            pool.add(agent, num_features, num_actions)
+            envs.close()
+            envs = open_tables(len(pool.versions), pool.files())
+            first_obs, first_allowed = envs.reset()
+            next_obs = torch.from_numpy(first_obs.copy())
+            next_allowed = torch.from_numpy(first_allowed.copy())
+            next_done = torch.zeros(args.num_envs)
+            print(f"           pool: {', '.join(os.path.basename(f) for f in pool.files())}", flush=True)
 
     envs.close()
     print(f"saved {args.out}.txt" + (" and ../rl_model_data.cpp (run make to build it in)" if args.embed else ""))

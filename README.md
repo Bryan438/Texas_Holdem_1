@@ -295,8 +295,58 @@ all its chips in with good hands. The mix of opponents matters: trained on a mix
 weak opponents it crushed them but only broke even with `equity` (-8 ± 19); trained on
 `equity` alone it lost to `calling`. It has not been measured against people, it does not
 remember how an opponent played earlier hands, and a player who sees through its betting
-could beat it. Natural next steps: train it against earlier versions of itself, and give
-it each opponent's statistics from the hand history.
+could beat it.
+
+#### Self-play, and how exploitable a network is
+
+`train.py --self-play` also seats earlier versions of the learner: every `--snapshot-every`
+updates the network is saved to `rl/models/pool/`, and "rl" opponents draw one of the
+latest `--pool-size` versions (plus any `--pool-anchor` networks) for each hand. `thmatch`
+can seat a given network with `rl=FILE`, so versions can play each other:
+
+```bash
+cd rl
+.venv/bin/python train.py --self-play --start-from models/mix2.pt --pool-anchor models/mix2.txt \
+    --opponents equity:4,rules:2,calling:1,random:1,rl:8 --players 2,2,2,2,2,3,4,6 \
+    --total-timesteps 12000000 --learning-rate 2e-4 --out models/sp
+cd .. && ./thmatch --hands 50000 rl=rl/models/sp.txt rl=rl/models/mix2.txt
+```
+
+Beating the bots it trained against says little about how a strong player would do. A
+better test: train a fresh network heads-up against only the one being tested
+(`--opponents rl:1 --opponent-model FILE`, 2 million decisions) and see how much it wins.
+The less such an *exploiter* wins, the harder the network is to take advantage of.
+
+Two runs, 12 million decisions each, so far gave no network that is better on every count,
+so the built-in one was left as it was:
+
+- **self-play (sp)**: from the built-in network, against the fixed bots and its own recent
+  versions (about 35 minutes).
+- **league (lg1)**: from the built-in network again, with the self-play network and the two
+  exploiters (of the built-in and of sp) added to the pool, the exploiters drawn twice as
+  often (about an hour: more network opponents make the tables slower).
+
+| Heads-up, bb/100 (95% interval) | built-in (mix2) | self-play (sp) | league (lg1) |
+|---|---|---|---|
+| vs the built-in, 50,000 hands | | +134.5 ± 13.3 | -64.3 ± 21.1 |
+| vs equity, 30,000 hands | +46.2 ± 10.6 | +15.7 ± 11.1 | -56.0 ± 16.4 |
+| vs rules, 30,000 hands | +44.1 ± 7.1 | +17.2 ± 9.8 | -36.4 ± 14.8 |
+| vs calling, 10,000 hands | +2293.9 ± 123.8 | +2128.9 ± 118.6 | +1790.5 ± 98.8 |
+| what its own exploiter wins from it, 50,000 hands | 628 ± 20 | 1108 ± 36 | 271 ± 34 |
+
+- **sp** beats the built-in network clearly but the fixed bots by less, and is *easier* to
+  exploit. Its exploiter raises nearly every hand and keeps betting: sp calls before and on
+  the flop, then folds on the turn or river, after paying.
+- **lg1** learned to beat those exploiters (it wins 1800 to 2400 bb/100 from them) and its
+  own exploiter wins less than half of what the built-in one gives away. But it now loses
+  to `equity` and `rules`: braced for opponents who raise every hand, it pays off the ones
+  who bet only with good cards.
+
+A network that does not know who it is playing has to pick one way to play against
+everyone, and these opponents want opposite things (call the maniac down, fold to the
+tight player). The likely way out is to let it see each opponent's statistics (how often
+they put money in and raise), so it can tell them apart. Until then the built-in network,
+which beats every fixed bot by the most, stays.
 
 ## Test
 ```bash

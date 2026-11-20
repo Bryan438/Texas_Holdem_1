@@ -22,6 +22,7 @@ rl_env::rl_env(const rl_env_options& opts): options(opts), rng(opts.seed * 26544
     game->on_message(client_of(i), json({{"type", "join"}, {"name", "seat-" + std::to_string(i)}}).dump());
   }
   styles.assign(options.players, bot_style::EQUITY);
+  models.assign(options.players, nullptr);
   rl_step ignored;
   play_to_learner(ignored);
 }
@@ -42,6 +43,10 @@ void rl_env::start_hand(){
         break;
       }
       roll -= choice.second;
+    }
+    models[i] = nullptr;
+    if(styles[i] == bot_style::RL && !options.pool.empty()){
+      models[i] = options.pool[rng() % options.pool.size()].get();
     }
   }
   learner_chose = false;
@@ -87,7 +92,7 @@ void rl_env::play_to_learner(rl_step& result){
       seen = rl_observe(view, rng);
       return;
     }
-    bot_move move = decide(state, styles[seat], rng);
+    bot_move move = decide(state, styles[seat], rng, models[seat]);
     play(seat, move, state["actions"].value("check", false));
   }
 }

@@ -20,7 +20,8 @@ match_result run_match(const std::vector<bot_style>& styles, const match_options
   table t(&out, config, []{ return (int64_t)0; });
   for(size_t i = 0; i < styles.size(); i++){
     match_seat seat;
-    seat.name = std::string(bot_style_name(styles[i])) + "-" + std::to_string(i + 1);
+    seat.name = i < options.names.size() && !options.names[i].empty()
+                  ? options.names[i] : std::string(bot_style_name(styles[i])) + "-" + std::to_string(i + 1);
     seat.style = styles[i];
     result.seats.push_back(seat);
     t.on_connect(client_of(i));
@@ -36,7 +37,7 @@ match_result run_match(const std::vector<bot_style>& styles, const match_options
     for(int guard = 0; guard < 1000 && t.get_stage() != WAITING; guard++){
       int s = t.get_turn();
       json state = json::parse(out.last_state[client_of(s)]);
-      bot_move move = decide(state, styles[s], rng);
+      bot_move move = decide(state, styles[s], rng, s < (int)options.models.size() ? options.models[s] : nullptr);
       int errors_before = out.errors;
       t.on_message(client_of(s), move.to_message().dump());
       if(out.errors != errors_before){
