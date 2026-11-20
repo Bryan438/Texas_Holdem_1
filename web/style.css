@@ -39,8 +39,9 @@ button, input { font: inherit; color: inherit; }
 
 .bar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 16px;
+  gap: 8px 16px;
   padding: 10px 16px;
   border-bottom: 1px solid var(--line);
   background: var(--panel);
@@ -294,6 +295,18 @@ button.small { padding: 5px 10px; font-size: 13px; font-weight: 500; }
 }
 .raise-row .label { color: var(--muted); font-size: 13px; }
 .keys { color: var(--muted); font-size: 12px; }
+/* A vote to end or restart: everyone at the table answers */
+.vote {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px;
+  padding: 10px 14px; border: 1px solid var(--gold); border-radius: var(--radius);
+  background: var(--panel-2);
+}
+.vote .what { font-weight: 600; }
+.vote .who { color: var(--muted); font-size: 13px; }
+.vote .buttons { display: flex; flex-wrap: nowrap; gap: 8px; margin-left: auto; }
+.vote .buttons button { flex: 0 0 auto; padding: 8px 14px; font-size: 14px; }
+.vote .left { color: var(--gold); font-variant-numeric: tabular-nums; font-size: 13px; }
+
 .notice { color: #f0a5a2; font-size: 13px; min-height: 1.4em; text-align: center; }
 
 /* ---------------------------------------------------------------- log */
