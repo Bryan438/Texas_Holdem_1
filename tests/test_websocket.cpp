@@ -7,6 +7,7 @@
 #include <vector>
 #include <unistd.h>
 #include <sys/socket.h>
+#include <netinet/in.h>
 #include <sys/stat.h>
 #include "test_framework.h"
 #include "table_harness.h"
@@ -324,4 +325,24 @@ TEST(events_and_errors_say_what_happened_in_fields){
     show = show || (m["type"] == "event" && m.value("kind", "") == "show" && m["cards"].size() == 2);
   }
   CHECK(win && show);
+}
+
+// A second server on a port that is taken must hear about it, so thserver can
+// say so and stop instead of hanging with nothing to listen on.
+TEST(transport_reports_a_port_that_is_taken){
+  int taken = socket(AF_INET, SOCK_STREAM, 0);
+  sockaddr_in addr{};
+  addr.sin_family = AF_INET;
+  addr.sin_addr.s_addr = INADDR_ANY;
+  addr.sin_port = 0;   // any free port
+  CHECK(bind(taken, (sockaddr*)&addr, sizeof(addr)) == 0);
+  CHECK(listen(taken, 1) == 0);
+  socklen_t size = sizeof(addr);
+  getsockname(taken, (sockaddr*)&addr, &size);
+  int port = ntohs(addr.sin_port);
+
+  transport* tp = transport::get_instance();
+  CHECK(!tp->start_with_thread(port));
+  CHECK(!tp->start_web_with_thread(port, "web"));
+  close(taken);
 }

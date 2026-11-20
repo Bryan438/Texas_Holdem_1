@@ -118,9 +118,12 @@ int main(int argc, char* argv[]){
 
   table game(tp, config);
   tp->set_listener(&game);
-  tp->start_with_thread(port);
-  if(web_port > 0 && web_port != port){
-    tp->start_web_with_thread(web_port, web_root);
+  // Both ports must open, or there is no point running: say so and stop.
+  if(!tp->start_with_thread(port)){
+    return 1;
+  }
+  if(web_port > 0 && web_port != port && !tp->start_web_with_thread(web_port, web_root)){
+    return 1;
   }
 
   std::string turn = config.turn_seconds > 0 ? std::to_string(config.turn_seconds) + " s per turn" : "no turn limit";
