@@ -54,9 +54,13 @@ struct hand_result_entry{
 //   {"type":"start"}
 //   {"type":"action","action":"fold|check|call|raise","amount":20}
 //     amount = total bet for this round after the raise ("raise to")
-//   {"type":"end_game"}   only for a person alone with bots: stop, show who is up and down
-//   {"type":"new_game"}   same person, or anyone once the game is over: everyone back to
-//                         the starting chips, hand 1 next
+//   {"type":"end_game"}   stop, show who is up and down
+//   {"type":"new_game"}   everyone back to the starting chips, hand 1 next
+//     Both take effect only once every person connected agrees: the first one
+//     opens a vote (at once for a person alone with bots). Once the game is
+//     over, new_game needs no vote.
+//   {"type":"vote","agree":true}   answer the open vote; one "false" drops it
+//   {"type":"leave"}      get up: fold now if in a hand, the seat goes when it is over
 //   {"type":"add_bot","style":"rl","count":2}   a person seats bots that the server runs
 //   {"type":"remove_bot","seat":3}               between hands, one of those bots leaves
 //
@@ -69,6 +73,7 @@ struct hand_result_entry{
 //     word the line themselves (the web client, in two languages)
 //   {"type":"error","message":"...","code":"not_your_turn"}
 //   {"type":"hand_summary", ...}  the hand that just ended, as this player may see it
+//   {"type":"left","reason":"left|kicked"}  you are no longer seated (join again to play)
 class table: public observer{
   public:
     using clock_fn = std::function<int64_t()>;  // milliseconds, monotonic
@@ -99,6 +104,11 @@ class table: public observer{
     int board_size() const { return board_count; }
     // Full record of the last finished hand, including every hole card.
     const json& last_hand() const { return last_record; }
+
+    // The server's own commands (typed into thserver). kick: false and why
+    // when there is nobody of that name.
+    bool kick(const std::string& name, std::string& error);
+    std::string roster() const;
 
     // Set a seat's chips between hands (tests; could back an admin command).
     void set_stack(int seat, int chips){ if(current_stage == WAITING) seats[seat]->stack = chips; }
@@ -132,6 +142,14 @@ class table: public observer{
     json record;                        // the hand being played (see hand history)
     json last_record;                   // the last finished hand
 
+    // A proposal to end or restart the game while other people are here:
+    // it passes once every connected person agrees.
+    std::string vote_kind;              // "" = none, "end" or "new"
+    std::string vote_by;
+    std::vector<std::string> vote_yes;
+    int64_t vote_deadline = 0;
+    static constexpr int VOTE_SECONDS = 60;
+
     // Message handlers
     void handle_join(int client, const json& msg);
     void handle_start(int client);
@@ -140,6 +158,7 @@ class table: public observer{
     void handle_new_game(int client);
     void handle_add_bot(int client, const json& msg);
     void handle_remove_bot(int client, const json& msg);
+    void handle_vote(int client, const json& msg);
 
     // Game flow
     bool start_hand();
@@ -155,7 +174,15 @@ class table: public observer{
     void fold_seat(int seat);
     bool fold_absent(int seat);
     void cancel_hand();
-    void reset_game(const std::string& by);
+    void reset_game(const std::string& by, bool voted = false);
+    void end_game(const std::string& by, bool voted);
+    void propose(int seat, const std::string& kind);
+    bool check_vote();
+    bool votes(const player& p) const;
+    void clear_vote();
+    void remove_player(int seat, bool kicked);
+    void erase_seat(int seat);
+    void purge_leavers();
     bool alone_with_bots(int seat) const;
     json standings() const;
     int take_seat();

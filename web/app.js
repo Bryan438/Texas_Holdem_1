@@ -38,6 +38,7 @@ const S = {
   decision: '',
   turnEndsAt: 0,
   nextHandAt: 0,
+  voteEndsAt: 0,
   noticeTimer: 0,
 };
 
@@ -138,6 +139,7 @@ function onMessage(m) {
     S.state = m;
     S.turnEndsAt = m.turn_time_left == null ? 0 : Date.now() + m.turn_time_left * 1000;
     S.nextHandAt = m.next_hand_in == null ? 0 : Date.now() + m.next_hand_in * 1000;
+    S.voteEndsAt = m.vote ? Date.now() + m.vote.seconds_left * 1000 : 0;
     const decision = decisionKey(m);
     if (decision !== S.decision) {
       S.decision = decision;
@@ -166,6 +168,22 @@ function onMessage(m) {
     S.summary = m;
     remember(sessionStorage, 'th.summary', JSON.stringify(m));
     renderStatic();
+  }
+  else if (m.type === 'left') {
+    // Up from the table (by choice, or the server removed us): back to the
+    // name box, and a reload must not sit down again.
+    const name = S.wantName;
+    S.joined = false;
+    S.state = null;
+    S.wantName = '';
+    S.wasOver = false;
+    S.joinError = m.reason === 'kicked' ? { text: t('left.kicked') } : null;
+    try {
+      sessionStorage.removeItem('th.name');
+      if (name) localStorage.removeItem(tokenKey(name));
+    } catch { /* nothing to forget */ }
+    for (const dialog of document.querySelectorAll('dialog[open]')) dialog.close();
+    renderScreen();
   }
   else if (m.type === 'error') {
     if (!S.joined) {
@@ -203,13 +221,18 @@ function renderStatic() {
   $('summary-button').hidden = !S.summary;
   $('end-game').textContent = t('manage.end');
   $('new-game').textContent = t('manage.new');
+  $('leave').textContent = t('manage.leave');
   renderConnection();
 }
 
 function renderScreen() {
   $('join').hidden = S.joined;
   $('game').hidden = !S.joined;
-  $('join-error').textContent = S.joinError ? errorText(S.lang, S.joinError) : '';
+  if (!S.joined) {
+    $('manage').hidden = true;
+    document.title = t('title');
+  }
+  $('join-error').textContent = !S.joinError ? '' : S.joinError.text || errorText(S.lang, S.joinError);
   if (S.joined) renderGame();
 }
 
@@ -227,11 +250,13 @@ function renderGame() {
   const yours = Boolean(st && st.actions);
   document.title = (yours ? '● ' + t('turn.yours') + ' · ' : '') + t('title');
   if (!st) return;
-  // Ending or restarting is offered only while every other player is a bot.
-  $('manage').hidden = !st.solo;
+  // Anyone seated may leave, or ask to end or restart (alone with bots it
+  // happens at once; with other people they all have to agree).
+  $('manage').hidden = !st.seats[st.you];
   $('end-game').hidden = Boolean(st.game_over);
   $('meta').textContent = (st.hand > 0 ? t('meta.hand', { n: st.hand }) + ' · ' : '') +
                           t('meta.blinds', { sb: st.blinds[0], bb: st.blinds[1] });
+  renderVote(st);
   renderSeats(st);
   renderCenter(st);
   renderMine(st);
@@ -248,7 +273,7 @@ function renderSeats(st) {
     const mine = seat.seat === st.you;
     // Disconnected in the middle of a hand: still holding cards, for a while.
     const away = live && seat.reconnect_in != null;
-    const out = !away && ['folded', 'sitting_out', 'disconnected', 'busted'].includes(seat.status);
+    const out = !away && ['folded', 'sitting_out', 'disconnected', 'busted', 'left'].includes(seat.status);
     const holding = live && (seat.status === 'active' || seat.status === 'allin' || away);
 
     let cards = [];
@@ -321,6 +346,25 @@ function placeBets() {
     chips.style.left = at.x + 'px';
     chips.style.top = at.y + 'px';
   }
+}
+
+// A vote to end or restart: what is asked, who still has to answer, and for
+// a player who has not answered yet, the two answers.
+function renderVote(st) {
+  const box = $('vote');
+  const vote = st.vote;
+  box.hidden = !vote;
+  if (!vote) { fill(box); return; }
+  const me = st.seats[st.you];
+  const mine = me && vote.waiting.includes(me.name);
+  const answer = (agree) => send({ type: 'vote', agree });
+  fill(box,
+    el('span', { class: 'what' }, t('vote.' + vote.kind, { name: vote.by })),
+    el('span', { class: 'who' }, vote.waiting.length > 0 ? t('vote.waiting', { names: vote.waiting.join(', ') }) : ''),
+    el('span', { class: 'left', 'data-vote-countdown': true }),
+    mine ? el('div', { class: 'buttons' },
+      el('button', { type: 'button', onclick: () => answer(false) }, t('vote.decline')),
+      el('button', { class: 'primary', type: 'button', onclick: () => answer(true) }, t('vote.agree'))) : null);
 }
 
 function renderCenter(st) {
@@ -594,6 +638,10 @@ function tick() {
   for (const away of document.querySelectorAll('[data-away-until]')) {
     away.textContent = t('status.away', { n: Math.max(0, Math.ceil((Number(away.dataset.awayUntil) - Date.now()) / 1000)) });
   }
+  const voteLeft = document.querySelector('[data-vote-countdown]');
+  if (voteLeft && S.voteEndsAt) {
+    voteLeft.textContent = t('vote.seconds', { n: Math.max(0, Math.ceil((S.voteEndsAt - Date.now()) / 1000)) });
+  }
   const countdown = document.querySelector('[data-countdown]');
   if (countdown && S.nextHandAt) {
     countdown.textContent = t('start.countdown', { n: Math.max(0, Math.ceil((S.nextHandAt - Date.now()) / 1000)) });
@@ -630,14 +678,21 @@ $('summary-button').addEventListener('click', () => {
   $('summary').showModal();
 });
 
+// With other people at the table these only ask: everyone has to agree.
+const together = () => Boolean(S.state && !S.state.solo);
+
 $('end-game').addEventListener('click', () => {
-  confirmThen(t('confirm.end'), t('manage.end'), () => send({ type: 'end_game' }));
+  confirmThen(t(together() ? 'confirm.end.vote' : 'confirm.end'), t('manage.end'), () => send({ type: 'end_game' }));
 });
 
 // Between hands of a finished game nothing is lost by starting over: no need to ask.
 $('new-game').addEventListener('click', () => {
   if (S.state && S.state.game_over) send({ type: 'new_game' });
-  else confirmThen(t('confirm.new'), t('manage.new'), () => send({ type: 'new_game' }));
+  else confirmThen(t(together() ? 'confirm.new.vote' : 'confirm.new'), t('manage.new'), () => send({ type: 'new_game' }));
+});
+
+$('leave').addEventListener('click', () => {
+  confirmThen(t('confirm.leave'), t('manage.leave'), () => send({ type: 'leave' }));
 });
 
 // Clicking the dimmed page around a dialog closes it.

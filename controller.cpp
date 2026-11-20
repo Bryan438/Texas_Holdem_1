@@ -3,6 +3,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <iostream>
 #include <string>
 #include <thread>
 
@@ -26,8 +27,52 @@ static void usage(const char* program){
          "                  (default hands.jsonl; it holds every player's cards)\n"
          "  --no-history    do not save hands\n"
          "  --verbose       print every message sent and received\n"
+         "While it runs, type into it: players (who is seated), kick NAME (remove\n"
+         "someone from the table), help.\n"
          "Old style still works: %s [port] [seconds per turn] [starting chips]\n",
          program, program);
+}
+
+static const char* console_help =
+  "Commands:\n"
+  "  players     who is seated, with their chips\n"
+  "  kick NAME   remove someone from the table (folds their hand if one is running)\n"
+  "  help        this list\n";
+
+// What the person running the server types. Runs until the input ends, so a
+// server started with no terminal (input from /dev/null) simply has no console.
+static void console(transport* tp, table* game){
+  std::string line;
+  while(std::getline(std::cin, line)){
+    line.erase(0, line.find_first_not_of(" \t"));
+    line.erase(line.find_last_not_of(" \t\r") + 1);
+    if(line.empty()){
+      continue;
+    }
+    std::string word = line.substr(0, line.find(' '));
+    std::string rest = word.size() < line.size() ? line.substr(word.size() + 1) : "";
+    rest.erase(0, rest.find_first_not_of(' '));
+    if(word == "players" || word == "list"){
+      std::string text;
+      tp->run_locked([&]{ text = game->roster(); });
+      printf("%s", text.c_str());
+    }
+    else if(word == "kick"){
+      if(rest.empty()){
+        printf("Usage: kick NAME\n");
+        continue;
+      }
+      std::string error;
+      bool done = false;
+      tp->run_locked([&]{ done = game->kick(rest, error); });
+      if(!done){
+        printf("%s\n", error.c_str());
+      }
+    }
+    else{
+      printf("%s", console_help);
+    }
+  }
 }
 
 // Parse a non-negative number; exits with usage on anything else.
@@ -144,6 +189,8 @@ int main(int argc, char* argv[]){
     printf("Saving hands to %s (contains every player's cards: keep it to yourself)\n",
            config.history_path.c_str());
   }
+  printf("Type players to see who is seated, kick NAME to remove someone, help for more\n");
+  std::thread(console, tp, &game).detach();
 
   // Turn time limit and next-hand countdown. Same lock as message handling.
   while(true){

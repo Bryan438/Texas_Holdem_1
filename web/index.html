@@ -10,10 +10,11 @@
   <header class="bar">
     <h1 id="title"></h1>
     <span id="meta" class="meta"></span>
-    <!-- Only while every other player is a bot -->
+    <!-- Once seated. With other people at the table, ending or restarting is put to a vote. -->
     <span id="manage" class="manage" hidden>
       <button id="end-game" class="quiet" type="button"></button>
       <button id="new-game" class="quiet" type="button"></button>
+      <button id="leave" class="quiet" type="button"></button>
     </span>
     <span id="conn" class="conn" role="status"></span>
     <button id="lang" class="quiet" type="button"></button>
@@ -34,6 +35,7 @@
   <!-- At the table -->
   <main id="game" class="game" hidden>
     <section class="play">
+      <div id="vote" class="vote" role="status" hidden></div>
       <div id="table" class="table">
         <div class="felt"></div>
         <div id="center" class="center"></div>

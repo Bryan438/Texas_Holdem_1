@@ -167,3 +167,17 @@ test('hand names and errors', () => {
   assert.equal(errorText('en', { message: 'something else' }), 'something else');
   assert.equal(errorText('zh', { code: 'not_alone', message: 'x' }), '只有桌上除了你都是机器人时才能这样做。');
 });
+
+test('leaving, removal and votes are worded', () => {
+  assert.equal(eventKey({ kind: 'left', name: 'Ann' }), 'event.left');
+  assert.equal(eventKey({ kind: 'fold', name: 'Ann', reason: 'left' }), 'event.fold.left');
+  assert.equal(eventKey({ kind: 'fold', name: 'Ann', reason: 'kicked' }), 'event.fold.kicked');
+  assert.equal(eventKey({ kind: 'vote_started', vote: 'end' }), 'event.vote_started.end');
+  assert.equal(eventKey({ kind: 'vote_started', vote: 'new' }), 'event.vote_started.new');
+  assert.equal(eventKey({ kind: 'game_over', name: 'Ann', vote: true }), 'event.game_over.vote');
+  assert.equal(eventKey({ kind: 'game_over', name: 'Ann', vote: false }), 'event.game_over');
+  assert.equal(eventKey({ kind: 'new_game', name: 'Ann', amount: 200, vote: true }), 'event.new_game.vote');
+  assert.deepEqual(eventPieces('zh', { kind: 'vote_started', vote: 'new', name: 'Ann', seconds: 60 }),
+                   ['Ann 提议重新开始：桌上所有人需在 60 秒内同意']);
+  assert.equal(errorText('zh', { code: 'vote_open', message: 'x' }), '已经有一个投票在进行，请先表态。');
+});

@@ -163,7 +163,7 @@ TEST(turn_timer_still_applies_to_an_absent_player){
 
 // ---------------------------------------------------------------- ending and restarting
 
-TEST(only_a_person_alone_with_bots_may_end_the_game){
+TEST(a_person_alone_with_bots_ends_the_game_at_once_bots_never_can){
   solo_table h(2);
   CHECK(h.state(0).value("solo", false) == true);
   CHECK(h.state(1).value("solo", true) == false);       // a bot never is
@@ -171,23 +171,26 @@ TEST(only_a_person_alone_with_bots_may_end_the_game){
   CHECK(h.state(0)["seats"][0].value("bot", true) == false);
   h.start();
   h.send(harness::client(1), {{"type", "end_game"}});
-  CHECK(h.error_code(1) == "not_alone");
+  CHECK(h.error_code(1) == "bots_cannot");
   h.send(harness::client(2), {{"type", "new_game"}});
-  CHECK(h.error_code(2) == "not_alone");
+  CHECK(h.error_code(2) == "bots_cannot");
   CHECK(h.t.get_stage() != WAITING);
 
-  // A second person sits down: now nobody may.
+  // A second person sits down: ending now needs her yes (see test_leave_and_vote).
   h.join(301, "Alice");
   CHECK(h.state(0).value("solo", true) == false);
   h.send(harness::client(0), {{"type", "end_game"}});
-  CHECK(h.error_code(0) == "not_alone");
-  h.send(harness::client(0), {{"type", "new_game"}});
   CHECK(h.t.get_stage() != WAITING);
   CHECK(h.state(0).value("game_over", true) == false);
+  CHECK(h.state(0)["vote"].value("kind", "") == "end");
+  h.send(301, {{"type", "vote"}, {"agree", false}});
+  CHECK(h.state(0)["vote"].is_null());
 
-  // She leaves again.
+  // She disconnects again: alone once more, it takes effect at once.
   h.t.on_disconnect(301);
   CHECK(h.state(0).value("solo", false) == true);
+  h.send(harness::client(0), {{"type", "end_game"}});
+  CHECK(h.state(0).value("game_over", false) == true);
 }
 
 TEST(ending_the_game_cancels_the_hand_and_shows_who_is_up){

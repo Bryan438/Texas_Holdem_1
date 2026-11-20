@@ -52,6 +52,14 @@ make                      # builds ./thserver, ./thstats, ./thbot, ./thmatch and
 ./thserver --verbose      # also print every message sent and received
 ./thserver --help
 ```
+While the server runs you can type into its terminal:
+```
+players          who is seated: chips, person or bot, here / disconnected / leaving
+kick NAME        remove someone from the table (a running hand is folded for them)
+help
+```
+A server started without a terminal (input from `/dev/null`) simply has no console.
+
 Players sit down from a browser (below), from the terminal client
 (https://github.com/Bryan438/TH_Client), or both at the same table.
 
@@ -74,10 +82,15 @@ start. (Bots in another terminal, `./thbot --bots 3`, still work as before; see 
 - Reloading the page or losing the connection takes your seat back by itself (the page keeps
   the token), and the hand log comes back with it. If that happens during a hand, your cards
   wait for you for 30 seconds (`--grace`).
-- When everyone else at the table is a bot, two more buttons appear: **End game** stops
-  dealing and shows who is up and who is down; **Restart** puts everyone back on the starting
-  chips. Either cancels the hand in progress and gives its bets back. With a second person
-  at the table the buttons are gone: nobody can end someone else's game.
+- **End game** stops dealing and shows who is up and who is down; **Restart** puts everyone
+  back on the starting chips. Either cancels the hand in progress and gives its bets back.
+  When everyone else at the table is a bot it happens at once. With other people at the
+  table it is a vote: a bar shows who asked and who still has to answer, and it happens
+  once every connected person agrees within 60 seconds. One "no", or the time running out,
+  drops it. People who leave or are disconnected do not hold a vote up.
+- **Leave** gets up from the table: a hand you are in is folded (all-in, you stay in for
+  the showdown), the seat goes once the hand is over, and your chips go with you. The page
+  goes back to the name box; sitting down again starts from the starting chips.
 
 How it works: the page is plain HTML, CSS and JavaScript in `web/`, no build step and no
 libraries. `thserver` serves those files itself on the web port and upgrades `/ws` to a
@@ -100,8 +113,10 @@ Client -> server
 {"type":"start"}
 {"type":"action","action":"fold"}          // also "check", "call"
 {"type":"action","action":"raise","amount":20}   // raise TO 20 this round
-{"type":"end_game"}   // only for a person alone with bots: stop and show the standings
-{"type":"new_game"}   // same person, or anyone once the game is over: starting chips again, hand 1 next
+{"type":"end_game"}   // stop and show the standings: alone with bots at once, otherwise a vote
+{"type":"new_game"}   // starting chips again, hand 1 next: same rule, no vote once the game is over
+{"type":"vote","agree":true}   // answer the open vote; every connected person must agree, one false drops it
+{"type":"leave"}      // get up: fold now if in a hand, the seat goes when it is over
 {"type":"add_bot","style":"rl","count":2}   // seat bots that the server plays itself
 {"type":"remove_bot","seat":3}              // between hands, send one of those bots away
 ```
@@ -113,8 +128,9 @@ Server -> client
   your own hole cards (everyone's still in the hand at showdown), your best hand,
   whose turn it is and seconds left, seconds until the next hand starts, and, on your turn,
   the allowed actions with the raise range; also which seats are bots, `reconnect_in` for a
-  seat whose player dropped out mid-hand, `solo` (you may end or restart the game), and after
-  `end_game` `game_over` with `standings` (chips and net per player, best first)
+  seat whose player dropped out mid-hand, `solo` (ending or restarting needs nobody else),
+  `vote` (`kind` end or new, `by`, `agreed`, `waiting`, `seconds_left`; null when none),
+  and after `end_game` `game_over` with `standings` (chips and net per player, best first)
 - `event` - a line for the game log: `text` is ready to print ("Bob raises to 20",
   "Flop: Q♥ 8♥ 4♠"); `kind` and fields such as `name`, `amount`, `allin`, `cards`, `hand`
   say the same for clients that word it themselves (the web client, in two languages)
@@ -122,6 +138,8 @@ Server -> client
   (`not_your_turn`, `name_taken`, `table_full`, ...)
 - `hand_summary` - the hand that just ended: actions by street, board, showdown, winners;
   hole cards only for yourself and for hands shown at showdown
+- `left` - you are no longer seated (`reason`: `left`, or `kicked` by the server); join
+  again to play
 
 Rules handled by the server: turn order, check/call/raise options, minimum raise (a short
 all-in does not reopen betting), side pots, heads-up blinds, button rotation. A bet that
@@ -299,8 +317,13 @@ Tests have no external dependencies (`tests/test_framework.h`). They cover:
 - the fields of `event` and `error` messages
 - coming back after a disconnect: cards kept, the hand played on, folded when the time is up,
   all-in players left in, the turn timer still applied
-- ending and restarting a game: only for a person alone with bots, the hand cancelled with
-  every chip returned and nothing written to the history, standings, nothing dealt after the end
+- ending and restarting a game: at once for a person alone with bots, never by a bot, the
+  hand cancelled with every chip returned and nothing written to the history, standings,
+  nothing dealt after the end
+- people playing together: leaving between hands and during one (folded, recorded, seat
+  freed when the hand is over, name not taken back meanwhile, the button kept), the server
+  removing someone, and votes (everyone must agree, one no or 60 s drops it, a second ask
+  counts as a yes, people who leave or drop out and people who join late)
 - bots added from the page: names, styles, the move delay, 25 whole hands that add up, seats
   for the next hand, a full table, removal only between hands and only of those bots, the
   button passed on, no play once every person has left
