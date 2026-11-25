@@ -755,6 +755,18 @@ bool table::kick(const std::string& name, std::string& error){
   return false;
 }
 
+int table::people_seated() const{
+  return std::count_if(seats.begin(), seats.end(), [](const std::unique_ptr<player>& p){
+    return !p->bot && !p->leaving;
+  });
+}
+
+int table::people_here() const{
+  return std::count_if(seats.begin(), seats.end(), [](const std::unique_ptr<player>& p){
+    return !p->bot && p->connected;
+  });
+}
+
 std::string table::roster() const{
   if(seats.empty()){
     return "Nobody is seated.\n";
@@ -984,6 +996,9 @@ bool table::start_hand(){
             {"blinds", {config.small_blind, config.big_blind}},
             {"dealer", dealer}, {"small_blind", small_blind_seat}, {"big_blind", big_blind_seat},
             {"players", json::array()}, {"actions", json::array()}};
+  if(config.table_id > 0){
+    record["table"] = {{"id", config.table_id}, {"name", config.table_name}};
+  }
   for(size_t i = 0; i < seats.size(); i++){
     const player& p = *seats[i];
     if(p.dealt){
@@ -1372,6 +1387,9 @@ json table::state_for(int viewer) const{
   st["turn"] = turn;
   st["blinds"] = {config.small_blind, config.big_blind};
   st["starting_chips"] = config.starting_stack;
+  if(config.table_id > 0){
+    st["table"] = {{"id", config.table_id}, {"name", config.table_name}};
+  }
   st["game_over"] = game_over;
   st["solo"] = alone_with_bots(viewer);   // ending or restarting needs nobody else's yes
   st["host"] = -1;
@@ -1509,7 +1527,7 @@ void table::broadcast_state(){
 // word the line itself, for example in another language.
 void table::event(const std::string& text, json data){
   if(config.log_events){
-    printf("[table] %s\n", text.c_str());
+    printf("[%s] %s\n", config.table_name.empty() ? "table" : config.table_name.c_str(), text.c_str());
   }
   json msg = data.is_object() ? data : json::object();
   msg["type"] = "event";

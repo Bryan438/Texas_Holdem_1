@@ -29,6 +29,10 @@ const S = {
   wasOnline: false,
   joined: false,
   wantName: remembered(sessionStorage, 'th.name') || '',   // set: join as soon as connected
+  wantTable: Number(remembered(sessionStorage, 'th.table')) || 0,   // ...at this table
+  wantPassword: remembered(sessionStorage, 'th.pw') || '',
+  creating: null,              // a table we asked for: sit down there once it is open
+  lobby: null,                 // the last list of tables
   joinError: null,
   state: null,
   log: remembered(sessionStorage, 'th.name') ? recalled('th.log', []) : [],
@@ -96,7 +100,13 @@ function connect() {
     S.online = true;
     S.wasOnline = true;
     renderConnection();
-    if (S.wantName) sendJoin(S.wantName);
+    // Back after a dropped connection (or a reload): take the seat again. Until
+    // the table says welcome, an error means the seat is gone (the table
+    // closed, the server restarted): back to the lobby.
+    if (S.wantName && S.wantTable) {
+      S.rejoining = true;
+      sendJoin();
+    }
   };
   ws.onmessage = (message) => {
     let data;
@@ -116,23 +126,39 @@ function send(message) {
   if (S.ws && S.ws.readyState === WebSocket.OPEN) S.ws.send(JSON.stringify(message));
 }
 
-const tokenKey = (name) => `th.token.${location.host}.${name}`;
+// A seat's token is per table: the same name can sit at another table.
+const tokenKey = (table, name) => `th.token.${location.host}.${table}.${name}`;
 
-function sendJoin(name) {
-  const message = { type: 'join', name };
-  const token = remembered(localStorage, tokenKey(name));
+function sendJoin() {
+  const message = { type: 'join', name: S.wantName, table: S.wantTable };
+  const token = remembered(localStorage, tokenKey(S.wantTable, S.wantName));
   if (token) message.token = token;
+  if (S.wantPassword) message.password = S.wantPassword;
   send(message);
+}
+
+// Back in the lobby: a reload must not sit down again.
+function forgetTable() {
+  S.wantTable = 0;
+  S.wantPassword = '';
+  for (const key of ['th.name', 'th.table', 'th.pw']) {
+    try { sessionStorage.removeItem(key); } catch { /* nothing to forget */ }
+  }
 }
 
 function onMessage(m) {
   if (m.type === 'welcome') {
+    S.rejoining = false;
     S.joined = true;
     S.joinError = null;
     S.wantName = m.name;
-    remember(localStorage, tokenKey(m.name), m.token);
+    remember(localStorage, tokenKey(S.wantTable, m.name), m.token);
     remember(localStorage, 'th.name', m.name);
-    remember(sessionStorage, 'th.name', m.name);   // a reload of this tab sits down again
+    // A reload of this tab sits down at the same table again.
+    remember(sessionStorage, 'th.name', m.name);
+    remember(sessionStorage, 'th.table', String(S.wantTable));
+    remember(sessionStorage, 'th.pw', S.wantPassword);
+    for (const id of ['create', 'password']) if ($(id).open) $(id).close();
     renderScreen();
   }
   else if (m.type === 'state') {
@@ -170,24 +196,39 @@ function onMessage(m) {
     renderStatic();
   }
   else if (m.type === 'left') {
-    // Up from the table (by choice, or the server removed us): back to the
-    // name box, and a reload must not sit down again.
+    // Up from the table (by choice, removed, or the table closed): back to
+    // the lobby. The token is kept: sitting down again under this name brings
+    // the chips back.
     S.joined = false;
     S.state = null;
-    S.wantName = '';
     S.wasOver = false;
-    S.joinError = m.reason !== 'kicked' ? null
+    S.joinError = m.reason === 'closed' ? { text: t('left.closed') }
+                : m.reason !== 'kicked' ? null
                 : { text: m.by ? t('left.kicked.by', { by: m.by }) : t('left.kicked') };
-    // The token is kept: sitting down again under this name brings the chips back.
-    try { sessionStorage.removeItem('th.name'); } catch { /* nothing to forget */ }
+    forgetTable();
     for (const dialog of document.querySelectorAll('dialog[open]')) dialog.close();
     renderScreen();
   }
+  else if (m.type === 'lobby') {
+    S.lobby = m;
+    if (!S.joined) renderLobby();
+  }
+  else if (m.type === 'table_created') {
+    // We asked for it: sit down there, as its host.
+    if (S.creating) {
+      const password = S.creating.password;
+      S.creating = null;
+      sitAt(m.table, password);
+    }
+  }
   else if (m.type === 'error') {
-    if (!S.joined) {
+    if (!S.joined || S.rejoining) {
+      S.rejoining = false;
+      S.joined = false;
+      S.state = null;
       S.joinError = m;
-      S.wantName = '';
-      try { sessionStorage.removeItem('th.name'); } catch { /* nothing to forget */ }
+      S.creating = null;
+      forgetTable();
       renderScreen();
     }
     else {
@@ -210,10 +251,10 @@ function renderStatic() {
   $('title').textContent = t('title');
   $('lang').textContent = t('lang.switch');
   $('lang').setAttribute('aria-label', t('lang.switch.label'));
-  $('join-title').textContent = t('join.title');
+  $('lobby-title').textContent = t('lobby.title');
   $('join-label').textContent = t('join.name');
-  $('join-button').textContent = t('join.button');
-  $('join-hint').textContent = t('join.hint');
+  $('create-open').textContent = t('create.open');
+  $('join-hint').textContent = t('lobby.hint');
   $('log-title').textContent = t('log.title');
   $('summary-button').textContent = t('summary.button');
   $('summary-button').hidden = !S.summary;
@@ -232,6 +273,125 @@ function renderScreen() {
   }
   $('join-error').textContent = !S.joinError ? '' : S.joinError.text || errorText(S.lang, S.joinError);
   if (S.joined) renderGame();
+  else renderLobby();
+}
+
+// ---------------------------------------------------------------- the lobby
+
+// The main table keeps the server's default name in English; the page words it.
+const tableName = (id, name) => (id === 1 && name === 'Main table' ? t('table.main.name') : name);
+
+function renderLobby() {
+  const tables = (S.lobby && S.lobby.tables) || [];
+  if (tables.length === 0) {
+    fill($('tables'), el('li', { class: 'hint' }, t('lobby.empty')));
+  }
+  else {
+    fill($('tables'), tables.map((tb) => el('li', { class: 'table-row' },
+      el('div', { class: 'tinfo' },
+        el('div', { class: 'tname' }, tableName(tb.id, tb.name),
+           tb.main && tableName(tb.id, tb.name) === tb.name && el('span', { class: 'tag' }, t('table.main')),
+           tb.private && el('span', { class: 'tag' }, t('table.private')),
+           tb.playing && el('span', { class: 'tag playing' }, t('table.playing'))),
+        el('div', { class: 'tmeta' }, [
+          t('table.blinds', { sb: tb.blinds[0], bb: tb.blinds[1] }),
+          t('table.chips', { n: formatChips(tb.chips) }),
+          t('table.people', { n: tb.seats, max: tb.max }),
+          tb.host ? t('table.host', { name: tb.host }) : null,
+        ].filter(Boolean).join(' · '))),
+      el('button', { class: 'primary', type: 'button', disabled: tb.seats >= tb.max,
+                     onclick: () => enterTable(tb) }, t('table.enter')))));
+  }
+  $('create-open').disabled = Boolean(S.lobby && !S.lobby.can_create);
+}
+
+// The name in the box, remembered; null (and a word why) when it is empty.
+function myName() {
+  const name = $('name').value.trim();
+  if (!name) {
+    S.joinError = { text: t('name.need') };
+    renderScreen();
+    $('name').focus();
+    return null;
+  }
+  remember(localStorage, 'th.name', name);
+  return name;
+}
+
+function enterTable(tb) {
+  if (!myName()) return;
+  if (tb.private) askPassword(tb);
+  else sitAt(tb.id, '');
+}
+
+function sitAt(id, password) {
+  S.joinError = null;
+  S.wantName = myName() || S.wantName;
+  S.wantTable = id;
+  S.wantPassword = password;
+  // Sitting down by hand is a fresh start: what an earlier table logged is gone.
+  S.log = [];
+  S.summary = null;
+  remember(sessionStorage, 'th.log', '[]');
+  remember(sessionStorage, 'th.summary', 'null');
+  renderLog();
+  renderStatic();
+  $('join-error').textContent = '';
+  if (S.online) sendJoin();   // otherwise it is sent as soon as the connection opens
+}
+
+function askPassword(tb) {
+  const box = $('password');
+  const input = el('input', { id: 'table-password', type: 'password', maxlength: 32, autocomplete: 'off' });
+  const go = () => { if (input.value) sitAt(tb.id, input.value); };
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
+  fill(box,
+    el('div', { class: 'head' },
+      el('h2', {}, t('password.title', { name: tableName(tb.id, tb.name) })),
+      el('button', { class: 'quiet', type: 'button', onclick: () => box.close() }, t('summary.close'))),
+    el('div', { class: 'body form-grid' }, input),
+    el('div', { class: 'foot' }, el('button', { class: 'primary', type: 'button', onclick: go }, t('password.button'))));
+  box.showModal();
+  input.focus();
+}
+
+const BLINDS = [[1, 2], [2, 5], [5, 10]];
+const DEPTHS = [50, 100, 200];   // starting chips, in big blinds
+
+function showCreate() {
+  const name = myName();
+  if (!name) return;
+  const box = $('create');
+  const tname = el('input', { id: 'create-name', maxlength: 24, value: t('create.default', { name }) });
+  const blinds = el('select', { id: 'create-blinds' },
+    BLINDS.map(([sb, bb], i) => el('option', { value: i }, `${sb}/${bb}`)));
+  const chips = el('select', { id: 'create-chips' });
+  const fillChips = () => {
+    const bb = BLINDS[Number(blinds.value)][1];
+    fill(chips, DEPTHS.map((d) => el('option', { value: d * bb, selected: d === 100 },
+      t('create.chips.choice', { n: formatChips(d * bb), bb: d }))));
+  };
+  blinds.addEventListener('change', fillChips);
+  fillChips();
+  const password = el('input', { id: 'create-password', type: 'password', maxlength: 32, autocomplete: 'new-password' });
+  const go = () => {
+    const [sb, bb] = BLINDS[Number(blinds.value)];
+    S.creating = { password: password.value };
+    S.joinError = null;
+    send({ type: 'create_table', name: tname.value.trim(), blinds: [sb, bb], chips: Number(chips.value),
+           password: password.value });
+  };
+  fill(box,
+    el('div', { class: 'head' },
+      el('h2', {}, t('create.title')),
+      el('button', { class: 'quiet', type: 'button', onclick: () => box.close() }, t('summary.close'))),
+    el('div', { class: 'body form-grid' },
+      el('label', { for: 'create-name' }, t('create.name')), tname,
+      el('label', { for: 'create-blinds' }, t('create.blinds')), blinds,
+      el('label', { for: 'create-chips' }, t('create.chips')), chips,
+      el('label', { for: 'create-password' }, t('create.password')), password),
+    el('div', { class: 'foot' }, el('button', { class: 'primary', type: 'button', onclick: go }, t('create.button'))));
+  box.showModal();
 }
 
 function renderAll() {
@@ -252,7 +412,8 @@ function renderGame() {
   // happens at once; with other people they all have to agree).
   $('manage').hidden = !st.seats[st.you];
   $('end-game').hidden = Boolean(st.game_over);
-  $('meta').textContent = (st.hand > 0 ? t('meta.hand', { n: st.hand }) + ' · ' : '') +
+  $('meta').textContent = (st.table ? tableName(st.table.id, st.table.name) + ' · ' : '') +
+                          (st.hand > 0 ? t('meta.hand', { n: st.hand }) + ' · ' : '') +
                           t('meta.blinds', { sb: st.blinds[0], bb: st.blinds[1] });
   renderVote(st);
   renderSeats(st);
@@ -667,22 +828,7 @@ function tick() {
 
 // ---------------------------------------------------------------- the player's input
 
-$('join-form').addEventListener('submit', (e) => {
-  e.preventDefault();
-  const name = $('name').value.trim();
-  if (!name) return;
-  S.joinError = null;
-  S.wantName = name;
-  // Sitting down by hand is a fresh start: what an earlier visit logged is gone.
-  S.log = [];
-  S.summary = null;
-  remember(sessionStorage, 'th.log', '[]');
-  remember(sessionStorage, 'th.summary', 'null');
-  renderLog();
-  renderStatic();
-  $('join-error').textContent = '';
-  if (S.online) sendJoin(name);   // otherwise it is sent as soon as the connection opens
-});
+$('create-open').addEventListener('click', showCreate);
 
 $('lang').addEventListener('click', () => {
   S.lang = S.lang === 'zh' ? 'en' : 'zh';

@@ -30,6 +30,8 @@ struct table_config{
   bool log_events = true;  // print events on the server console
   std::string history_path; // append every finished hand here as one JSON line ("" = off)
   unsigned seed = 0;       // 0 = shuffle at random; N = the same decks every run (bot matches, tests)
+  int table_id = 0;        // in a lobby with several tables: which one (saved with each hand)
+  std::string table_name;
 };
 
 enum stage{
@@ -117,6 +119,12 @@ class table: public observer{
     // when there is nobody of that name.
     bool kick(const std::string& name, std::string& error);
     std::string roster() const;
+
+    // For the lobby's list of tables.
+    const std::string& host_name() const { return host; }
+    int people_seated() const;   // people (not bots) with a seat, here or not
+    int people_here() const;     // people connected right now
+    const table_config& settings() const { return config; }
 
     // Set a seat's chips between hands (tests; could back an admin command).
     void set_stack(int seat, int chips){ if(current_stage == WAITING) seats[seat]->stack = chips; }

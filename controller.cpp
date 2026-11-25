@@ -7,6 +7,7 @@
 #include <string>
 #include <thread>
 
+#include "lobby.h"
 #include "table.h"
 #include "transport.h"
 
@@ -35,13 +36,15 @@ static void usage(const char* program){
 
 static const char* console_help =
   "Commands:\n"
-  "  players     who is seated, with their chips\n"
-  "  kick NAME   remove someone from the table (folds their hand if one is running)\n"
+  "  tables            the tables that are open\n"
+  "  players           who is seated at each table, with their chips\n"
+  "  kick NAME [TABLE] remove someone from their table (folds their hand if one is\n"
+  "                    running); TABLE only when the name is at more than one table\n"
   "  help        this list\n";
 
 // What the person running the server types. Runs until the input ends, so a
 // server started with no terminal (input from /dev/null) simply has no console.
-static void console(transport* tp, table* game){
+static void console(transport* tp, lobby* game){
   std::string line;
   while(std::getline(std::cin, line)){
     line.erase(0, line.find_first_not_of(" \t"));
@@ -57,14 +60,35 @@ static void console(transport* tp, table* game){
       tp->run_locked([&]{ text = game->roster(); });
       printf("%s", text.c_str());
     }
+    else if(word == "tables"){
+      std::string text;
+      tp->run_locked([&]{ text = game->list(); });
+      printf("%s", text.c_str());
+    }
     else if(word == "kick"){
       if(rest.empty()){
-        printf("Usage: kick NAME\n");
+        printf("Usage: kick NAME [TABLE]\n");
         continue;
       }
       std::string error;
       bool done = false;
-      tp->run_locked([&]{ done = game->kick(rest, error); });
+      // "kick RL 1" is the bot called "RL 1"; "kick Ann 3" is Ann at table 3,
+      // when nobody is called "Ann 3".
+      tp->run_locked([&]{
+        done = game->kick(rest, 0, error);
+        size_t space = rest.find_last_of(' ');
+        if(!done && space != std::string::npos &&
+           rest.find_first_not_of("0123456789", space + 1) == std::string::npos &&
+           space + 1 < rest.size() && rest.size() - space - 1 <= 6){
+          std::string retry;
+          if(game->kick(rest.substr(0, space), std::stoi(rest.substr(space + 1)), retry)){
+            done = true;
+          }
+          else if(error.find("nobody called") == 0){
+            error = retry;
+          }
+        }
+      });
       if(!done){
         printf("%s\n", error.c_str());
       }
@@ -161,7 +185,7 @@ int main(int argc, char* argv[]){
   transport* tp = transport::get_instance();
   tp->set_verbose(verbose);
 
-  table game(tp, config);
+  lobby game(tp, config);
   tp->set_listener(&game);
   // Both ports must open, or there is no point running: say so and stop.
   if(!tp->start_with_thread(port)){
@@ -189,7 +213,7 @@ int main(int argc, char* argv[]){
     printf("Saving hands to %s (contains every player's cards: keep it to yourself)\n",
            config.history_path.c_str());
   }
-  printf("Type players to see who is seated, kick NAME to remove someone, help for more\n");
+  printf("Type tables to see the tables, players to see who is seated, kick NAME to remove someone, help for more\n");
   std::thread(console, tp, &game).detach();
 
   // Turn time limit and next-hand countdown. Same lock as message handling.

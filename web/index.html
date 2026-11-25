@@ -20,16 +20,17 @@
     <button id="lang" class="quiet" type="button"></button>
   </header>
 
-  <!-- Before sitting down -->
+  <!-- The lobby: your name, the tables, a new table -->
   <main id="join" class="join">
-    <form id="join-form" class="card-panel">
-      <h2 id="join-title"></h2>
+    <section class="card-panel lobby-panel">
+      <h2 id="lobby-title"></h2>
       <label for="name" id="join-label"></label>
-      <input id="name" name="name" maxlength="24" autocomplete="nickname" required>
+      <input id="name" name="name" maxlength="24" autocomplete="nickname">
       <p id="join-error" class="error" role="alert"></p>
-      <button id="join-button" class="primary" type="submit"></button>
+      <ul id="tables" class="tables"></ul>
+      <button id="create-open" type="button"></button>
       <p id="join-hint" class="hint"></p>
-    </form>
+    </section>
   </main>
 
   <!-- At the table -->
@@ -60,6 +61,8 @@
   <dialog id="standings" class="summary"></dialog>
   <dialog id="confirm" class="summary confirm"></dialog>
   <dialog id="bots" class="summary"></dialog>
+  <dialog id="create" class="summary"></dialog>
+  <dialog id="password" class="summary"></dialog>
 
   <noscript>This page needs JavaScript to play.</noscript>
   <script type="module" src="app.js"></script>

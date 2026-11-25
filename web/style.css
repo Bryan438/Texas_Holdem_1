@@ -98,6 +98,25 @@ button.small { padding: 5px 10px; font-size: 13px; font-weight: 500; }
   font-size: 16px;
 }
 .hint { color: var(--muted); font-size: 13px; }
+
+/* The lobby: one row per table */
+.lobby-panel { width: min(560px, 100%); }
+.tables { list-style: none; padding: 0; display: flex; flex-direction: column; gap: 8px; margin: 4px 0; }
+.table-row {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel-2);
+}
+.table-row .tinfo { flex: 1; min-width: 0; }
+.table-row .tname { font-weight: 650; overflow-wrap: anywhere; }
+.table-row .tmeta { color: var(--muted); font-size: 13px; margin-top: 2px; }
+.table-row .tag.playing { color: var(--good); border-color: var(--good); }
+.table-row button { flex: 0 0 auto; }
+.form-grid { display: grid; gap: 6px; }
+.form-grid label { color: var(--muted); font-size: 13px; margin-top: 6px; }
+.form-grid input, .form-grid select {
+  background: var(--bg); color: var(--text); border: 1px solid var(--line);
+  border-radius: 8px; padding: 9px 11px; font-size: 15px;
+}
 .error { color: #f0a5a2; font-size: 13px; min-height: 1.4em; }
 
 /* ---------------------------------------------------------------- layout */

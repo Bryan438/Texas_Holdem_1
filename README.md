@@ -54,8 +54,10 @@ make                      # builds ./thserver, ./thstats, ./thbot, ./thmatch and
 ```
 While the server runs you can type into its terminal:
 ```
-players          who is seated: chips, person or bot, here / disconnected / leaving
-kick NAME        remove someone from the table (a running hand is folded for them)
+tables           the tables that are open: blinds, chips, who is seated, host, private or not
+players          who is seated at each table: chips, person or bot, here / disconnected / leaving
+kick NAME        remove someone from their table (a running hand is folded for them);
+kick NAME 3      ...at table 3, when the name sits at more than one table
 help
 ```
 A server started without a terminal (input from `/dev/null`) simply has no console.
@@ -65,9 +67,19 @@ Players sit down from a browser (below), from the terminal client
 
 ## Play in a browser
 Start `./thserver` and open **http://localhost:8080**. Friends on the same network open
-`http://<your ip>:8080`. Type a name, sit down, press **Add bots** to seat some opponents,
-and deal. Bots added from the page are played by the server itself: there is nothing else to
-start. (Bots in another terminal, `./thbot --bots 3`, still work as before; see Bots.)
+`http://<your ip>:8080`. Type a name and pick a table from the lobby, or open your own; then
+press **Add bots** to seat some opponents, and deal. Bots added from the page are played by
+the server itself: there is nothing else to start. (Bots in another terminal,
+`./thbot --bots 3`, still work as before; see Bots.)
+
+- **The lobby** lists every table: its name, blinds, starting chips, how many are seated,
+  whether a hand is running, the host, and whether it needs a password. The main table is
+  always there; **Open a new table** picks a name, blinds (1/2, 2/5 or 5/10), starting chips
+  (50, 100 or 200 big blinds) and, if you like, a password. Whoever opens a table sits down
+  as its host. At most 20 tables are open at once; a table with nobody at it closes after
+  10 minutes (the main table never does).
+- You sit at one table at a time. **Leave** brings you back to the lobby; your chips at that
+  table are kept for you as usual. A reload sits you down at the same table again.
 
 - The page shows the table from your seat: everyone's stack, bet and status, the board,
   the pot, your cards and best hand, whose turn it is with the time left, and a hand log.
@@ -112,7 +124,25 @@ Newline-delimited JSON over TCP: one JSON object per line, both directions.
 You can even play by hand with `nc localhost 4000`. Browsers send and receive the same
 objects over a WebSocket (`ws://host:8080/ws`), one per message.
 
-Client -> server
+The server is a lobby with several tables. A connection starts in the lobby and gets the
+list of tables (`lobby`); at a table everything works as on a server with one table.
+
+Lobby (client -> server)
+```jsonc
+{"type":"list_tables"}
+{"type":"create_table","name":"Friday","blinds":[2,5],"chips":500,"password":"..."}
+    // blinds 1/2, 2/5 or 5/10; chips 20-500 big blinds (default 100); password optional
+    // answer: {"type":"table_created","table":3}; then join it
+{"type":"join","table":3,"name":"Bryan","password":"..."}   // sit down at table 3
+```
+`join` without `table` sits at the main table (table 1), so clients written before the lobby,
+and `thbot`, work unchanged. Server -> client: `{"type":"lobby","tables":[{"id","name","main",
+"private","blinds","chips","seats","people","max","playing","host"}],"max_tables","can_create"}`,
+on connecting, on getting up from a table, and whenever the list changes. Errors: `no_table`,
+`bad_password`, `lobby_full`, `table_name`, `bad_blinds`, `bad_chips`, `at_table`. A table that
+closes under a bot still sitting there sends it `left` with `reason: closed`.
+
+At a table (client -> server)
 ```jsonc
 {"type":"join","name":"Bryan"}
 {"type":"join","name":"Bryan","token":"..."}   // take your seat back after a disconnect
@@ -132,7 +162,8 @@ Client -> server
 ```
 
 Server -> client
-- `welcome` - your seat number and a secret `token` (keep it to reconnect)
+- `welcome` - your seat number and a secret `token` (keep it to reconnect; a token belongs to
+  one table)
 - `state` - the whole table as you may see it, sent to everyone after every change:
   stage, board, pot, current bet, dealer and blinds, every seat's stack / bet / status,
   your own hole cards (everyone's still in the hand at showdown), your best hand,
@@ -196,6 +227,7 @@ what a person in its seat would see, no more. The server does not need to know a
 ./thbot --name Station --style calling --delay 0.5
 ./thbot --style rules                     # default style: equity
 ./thbot --style rl                        # the learned bot (see below)
+./thbot --table 3 --password owl         # sit at table 3 of the lobby (default: the main table)
 ./thbot --bots 3 --start                  # bots-only table: a bot starts each hand
 ```
 By default a bot never starts a hand, so a person still types `s`. With `--start`, the
@@ -392,6 +424,13 @@ Tests have no external dependencies (`tests/test_framework.h`). They cover:
   reload, anyone deals at a bots-only table; chips back after leaving (only with the token),
   a seat given away keeping its owner's chips, people who left in the standings, buying in
   again only when out of chips and counted against you
+- the lobby: the main table listed on connecting, join without a table going to it, opening
+  tables with their own blinds and chips (and refusing bad names, blinds, chips, passwords,
+  a full lobby), private tables and their password never shown, one table at a time and the
+  list again on leaving, a refused join staying in the lobby, tables playing independently,
+  coming back to a seat after a dropped connection, the host's kick sending to the lobby,
+  empty tables closing after 10 minutes but never the main one, the console's kick by name
+  and table, hands saved with their table
 - bots added from the page: names, styles, the move delay, 25 whole hands that add up, seats
   for the next hand, a full table, removal only between hands and only of those bots, the
   button passed on, no play once every person has left
