@@ -44,6 +44,8 @@ const S = {
   nextHandAt: 0,
   voteEndsAt: 0,
   noticeTimer: 0,
+  drawn: null,                 // the state the table was last drawn from, for motion
+  dealing: null,               // { hand, at }: cards of this hand are on their way
 };
 
 const t = (key, params) => translate(S.lang, key, params);
@@ -69,6 +71,18 @@ function el(tag, attrs = {}, ...children) {
 // (replaceChildren alone would print them as the word "null").
 function fill(node, ...children) {
   node.replaceChildren(...children.flat().filter((child) => child != null && child !== false));
+}
+
+// A round picture with the name's first letter, in a colour that stays the
+// same for that name. Bots are grey.
+const AVATAR_COLORS = ['#ff3b30', '#ff9500', '#34c759', '#00c7be', '#30b0c7', '#007aff',
+                       '#5856d6', '#af52de', '#ff2d55', '#a2845e'];
+function avatarEl(seat) {
+  const letter = ([...seat.name.trim()][0] || '?').toUpperCase();
+  let hash = 0;
+  for (const ch of seat.name) hash = (hash * 31 + ch.codePointAt(0)) >>> 0;
+  return el('div', { class: 'avatar' + (seat.bot ? ' bot' : ''), 'aria-hidden': 'true',
+                     style: seat.bot ? null : `--avatar:${AVATAR_COLORS[hash % AVATAR_COLORS.length]}` }, letter);
 }
 
 function cardEl(code, size = '') {
@@ -201,6 +215,7 @@ function onMessage(m) {
     // the chips back.
     S.joined = false;
     S.state = null;
+    S.drawn = null;
     S.wasOver = false;
     S.joinError = m.reason === 'closed' ? { text: t('left.closed') }
                 : m.reason !== 'kicked' ? null
@@ -288,6 +303,8 @@ function renderLobby() {
   }
   else {
     fill($('tables'), tables.map((tb) => el('li', { class: 'table-row' },
+      el('div', { class: 'ticon ' + (tb.main ? 'main' : 'n' + (tb.id % 4)), 'aria-hidden': 'true' },
+         tb.main ? '♠' : ['♣', '♥', '♦', '♠'][tb.id % 4]),
       el('div', { class: 'tinfo' },
         el('div', { class: 'tname' }, tableName(tb.id, tb.name),
            tb.main && tableName(tb.id, tb.name) === tb.name && el('span', { class: 'tag' }, t('table.main')),
@@ -299,7 +316,7 @@ function renderLobby() {
           t('table.people', { n: tb.seats, max: tb.max }),
           tb.host ? t('table.host', { name: tb.host }) : null,
         ].filter(Boolean).join(' · '))),
-      el('button', { class: 'primary', type: 'button', disabled: tb.seats >= tb.max,
+      el('button', { class: 'get', type: 'button', disabled: tb.seats >= tb.max,
                      onclick: () => enterTable(tb) }, t('table.enter')))));
   }
   $('create-open').disabled = Boolean(S.lobby && !S.lobby.can_create);
@@ -415,11 +432,21 @@ function renderGame() {
   $('meta').textContent = (st.table ? tableName(st.table.id, st.table.name) + ' · ' : '') +
                           (st.hand > 0 ? t('meta.hand', { n: st.hand }) + ' · ' : '') +
                           t('meta.blinds', { sb: st.blinds[0], bb: st.blinds[1] });
+  // A new state (not the same one drawn again, say in another language):
+  // what changed since the last one is shown moving.
+  const fresh = st !== S.drawn;
+  const before = fresh ? chipsBefore() : null;
   renderVote(st);
   renderSeats(st);
   renderCenter(st);
   renderMine(st);
   renderActions(st);
+  if (fresh) {
+    animateChange(S.drawn, st, before);
+    S.drawn = st;
+  }
+  // Every redraw makes new cards: those still on their way carry on.
+  if (S.dealing && S.dealing.hand === st.hand && st.stage !== 'waiting') animateDeal(st, S.dealing.at);
   tick();
 }
 
@@ -478,16 +505,20 @@ function renderSeats(st) {
                        onclick: () => (seat.bot ? kick() : confirmThen(t('confirm.kick', { name: seat.name }), t('kick.label', { name: seat.name }), kick)) },
            '×')
       : null;
+    // The cards stand above a name plate: picture, name, chips, what is happening.
     nodes.push(el('div', { class: classes.filter(Boolean).join(' '), 'data-seat': seat.seat, style: `left:${at.x}%;top:${at.y}%` },
-      remove,
-      el('div', { class: 'badges' }, badges),
       el('div', { class: 'cards' }, cards),
-      el('div', { class: 'name', title: seat.name }, mine ? `${seat.name} (${t('you')})` : seat.name),
-      el('div', { class: 'stack' }, formatChips(seat.stack), seat.bot && el('span', { class: 'tag' }, t('bot.tag'))),
-      // On a narrow screen the bet is written in the seat; on a wide one it lies on the felt.
-      seat.bet > 0 && el('div', { class: 'betline' }, t('bet.label') + ' ' + formatChips(seat.bet)),
-      turn && S.turnEndsAt && !away ? el('div', { class: 'timer' })
-        : el('div', { class: statusClass, 'data-away-until': awayUntil }, status)));
+      el('div', { class: 'plate' },
+        remove,
+        el('div', { class: 'badges' }, badges),
+        avatarEl(seat),
+        el('div', { class: 'who' },
+          el('div', { class: 'name', title: seat.name }, mine ? `${seat.name} (${t('you')})` : seat.name),
+          el('div', { class: 'stack' }, formatChips(seat.stack), seat.bot && el('span', { class: 'tag' }, t('bot.tag'))),
+          // On a narrow screen the bet is written in the seat; on a wide one it lies on the felt.
+          seat.bet > 0 && el('div', { class: 'betline' }, t('bet.label') + ' ' + formatChips(seat.bet)),
+          turn && S.turnEndsAt && !away ? el('div', { class: 'timer' })
+            : el('div', { class: statusClass, 'data-away-until': awayUntil }, status)))));
 
     if (seat.bet > 0) {
       nodes.push(el('div', { class: 'bet', 'data-seat': seat.seat }, formatChips(seat.bet)));
@@ -509,6 +540,161 @@ function placeBets() {
                          { width: seat.offsetWidth, height: seat.offsetHeight }, 20);
     chips.style.left = at.x + 'px';
     chips.style.top = at.y + 'px';
+  }
+}
+
+// ---------------------------------------------------------------- motion
+// Cards are dealt from the middle of the table, bets slide out of the seats
+// and into the pot, the pot goes to whoever won it, new cards turn over.
+// Every state redraws the table, so this compares the state before with the
+// one now and moves the new elements from where things were. With reduced
+// motion asked for, nothing moves.
+
+const EASE = 'cubic-bezier(0.2, 0.8, 0.2, 1)';
+const DEAL_GAP = 45;     // ms between one card and the next
+const DEAL_TIME = 320;   // ms for a card to reach its seat
+const stillPlease = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+function middleOf(node) {
+  const r = node.getBoundingClientRect();
+  return { x: r.left + r.width / 2, y: r.top + r.height / 2, width: r.width };
+}
+
+const seatNode = (seat) => document.querySelector(`#seats .seat[data-seat="${seat}"]`);
+
+// Where the chips lie before a redraw: each bet on the felt (none on a narrow
+// screen, where bets are written in the seat), and the pot.
+function chipsBefore() {
+  const bets = new Map();
+  for (const chips of document.querySelectorAll('#seats .bet')) {
+    const at = middleOf(chips);
+    if (at.width > 0) bets.set(Number(chips.dataset.seat), at);
+  }
+  const pot = document.querySelector('#center .pot');
+  return { bets, pot: pot ? middleOf(pot) : null };
+}
+
+// A pile of chips that flies over the page from one point to another, then goes.
+function flyChips(from, to, words, delay = 0) {
+  const ghost = el('div', { class: 'bet flying', style: `left:${from.x}px;top:${from.y}px` }, words);
+  document.body.append(ghost);
+  const move = ghost.animate([
+    { transform: 'translate(-50%, -50%)', opacity: 1 },
+    { opacity: 1, offset: 0.75 },
+    { transform: `translate(calc(-50% + ${to.x - from.x}px), calc(-50% + ${to.y - from.y}px)) scale(0.8)`, opacity: 0 },
+  ], { duration: 480, delay, easing: EASE, fill: 'both' });
+  move.onfinish = () => ghost.remove();
+  move.oncancel = () => ghost.remove();
+}
+
+// Cards turning face up, one after another.
+function flipIn(cards, delay = 0) {
+  cards.forEach((card, i) => card.animate([
+    { transform: 'perspective(500px) rotateY(-90deg) scale(0.92)', opacity: 0.3 },
+    { transform: 'none', opacity: 1 },
+  ], { duration: 340, delay: delay + i * 90, easing: EASE, fill: 'backwards' }));
+}
+
+// The cards of a new hand, one at a time from the middle, starting left of
+// the dealer and going round twice. Run again after every redraw while the
+// deal lasts, picking up where it was.
+function animateDeal(st, startedAt) {
+  const elapsed = performance.now() - startedAt;
+  const n = st.seats.length;
+  const holders = [];
+  for (let k = 1; k <= n; k++) {
+    const seat = (st.dealer + k) % n;
+    const node = seatNode(seat);
+    if (node && node.querySelector('.cards .card')) holders.push(node);
+  }
+  const total = (2 * holders.length) * DEAL_GAP + DEAL_TIME + 400;
+  if (elapsed > total) {
+    S.dealing = null;
+    return;
+  }
+  const from = middleOf($('center'));
+  holders.forEach((node, i) => {
+    node.querySelectorAll('.cards .card').forEach((card, round) => {
+      const at = middleOf(card);
+      const deal = card.animate([
+        { transform: `translate(${from.x - at.x}px, ${from.y - at.y}px) scale(0.6) rotate(-10deg)`, opacity: 0 },
+        { opacity: 1, offset: 0.2 },
+        { transform: 'none', opacity: 1 },
+      ], { duration: DEAL_TIME, delay: (round * holders.length + i) * DEAL_GAP, easing: EASE, fill: 'backwards' });
+      deal.currentTime = elapsed;
+    });
+  });
+  // Your own cards, big in the dock, turn over once both have reached your seat.
+  const mine = holders.findIndex((node) => Number(node.dataset.seat) === st.you);
+  if (mine >= 0) {
+    document.querySelectorAll('#mine .card').forEach((card, round) => {
+      const turn = card.animate([
+        { transform: 'perspective(500px) rotateY(-90deg)', opacity: 0 },
+        { transform: 'none', opacity: 1 },
+      ], { duration: 340, delay: (holders.length + mine) * DEAL_GAP + DEAL_TIME + round * 90, easing: EASE, fill: 'backwards' });
+      turn.currentTime = elapsed;
+    });
+  }
+}
+
+function animateChange(prev, st, before) {
+  if (!prev || stillPlease() || document.hidden) return;
+  if ((prev.table && prev.table.id) !== (st.table && st.table.id)) return;
+  const live = st.stage !== 'waiting';
+  const sameHand = prev.hand === st.hand;
+  const sameRound = sameHand && prev.stage === st.stage;
+
+  if (!sameHand && live) {
+    S.dealing = { hand: st.hand, at: performance.now() };   // drawn by renderGame
+  }
+
+  // Bets put in since the last state slide out of their seat.
+  for (const chips of document.querySelectorAll('#seats .bet')) {
+    const seat = Number(chips.dataset.seat);
+    const was = sameRound && prev.seats[seat] ? prev.seats[seat].bet : 0;
+    const node = seatNode(seat);
+    if (!node || st.seats[seat].bet <= was) continue;
+    const from = middleOf(node.querySelector('.plate') || node), at = middleOf(chips);
+    if (at.width === 0) continue;
+    chips.animate([
+      { transform: `translate(calc(-50% + ${from.x - at.x}px), calc(-50% + ${from.y - at.y}px)) scale(0.6)`, opacity: 0 },
+      { transform: 'translate(-50%, -50%)', opacity: 1 },
+    ], { duration: 300, easing: EASE });
+  }
+
+  // The round is over: what lay in front of the seats goes into the pot.
+  let gathered = false;
+  if (sameHand && !sameRound) {
+    const pot = document.querySelector('#center .pot');
+    const to = pot ? middleOf(pot) : before.pot || middleOf($('center'));
+    for (const [seat, at] of before.bets) {
+      const bet = prev.seats[seat] ? prev.seats[seat].bet : 0;
+      if (bet > 0) {
+        flyChips(at, to, formatChips(bet));
+        gathered = true;
+      }
+    }
+  }
+
+  // New cards on the board turn over.
+  if (sameHand && st.board.length > prev.board.length) {
+    const board = [...document.querySelectorAll('#center .board .card')];
+    flipIn(board.slice(prev.board.length, st.board.length), gathered ? 250 : 0);
+  }
+
+  // The hand is over: cards shown at the showdown turn over, and the pot
+  // goes to whoever won it.
+  if (sameHand && prev.stage !== 'waiting' && !live) {
+    for (const seat of st.seats) {
+      const had = prev.seats[seat.seat];
+      const node = seatNode(seat.seat);
+      if (seat.cards && had && !had.cards && node) flipIn([...node.querySelectorAll('.cards .card')]);
+    }
+    const from = before.pot || middleOf($('center'));
+    for (const r of st.result || []) {
+      const node = seatNode(r.seat);
+      if (node) flyChips(from, middleOf(node.querySelector('.plate') || node), formatChips(r.amount), gathered ? 420 : 150);
+    }
   }
 }
 
@@ -626,11 +812,16 @@ function renderActions(st) {
                                  'aria-label': t(st.current_bet === 0 ? 'bet.label' : 'raise.label') });
     const number = el('input', { type: 'number', min: sizes.min, max: sizes.max, step: 1, value: S.raiseTo,
                                  'data-key': 'r', 'aria-label': t(st.current_bet === 0 ? 'bet.label' : 'raise.label') });
+    const presets = [];
     const set = (value, from) => {
       S.raiseTo = clampRaise(value, sizes);
       if (from !== slider) slider.value = S.raiseTo;
       if (from !== number) number.value = S.raiseTo;
       go.textContent = raiseWords();
+      const share = sizes.max > sizes.min ? (S.raiseTo - sizes.min) / (sizes.max - sizes.min) : 1;
+      slider.style.setProperty('--filled', (share * 100).toFixed(1) + '%');
+      const chosen = presets.find((p) => p.size === S.raiseTo);
+      for (const p of presets) p.button.classList.toggle('on', p === chosen);
     };
     slider.addEventListener('input', () => set(slider.value, slider));
     // While typing, a half-written number is left alone; it is checked on leaving the box.
@@ -642,12 +833,18 @@ function renderActions(st) {
     number.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') { set(number.value, null); act('raise', S.raiseTo); }
     });
-    const preset = (key, value) => el('button', { class: 'small', type: 'button', onclick: () => set(value, null) }, t(key));
+    const preset = (key, value) => {
+      const button = el('button', { class: 'small', type: 'button', onclick: () => set(value, null) }, t(key));
+      presets.push({ button, size: clampRaise(value, sizes) });
+      return button;
+    };
     raiseRow = el('div', { class: 'raise-row' },
       el('span', { class: 'label' }, t(st.current_bet === 0 ? 'bet.label' : 'raise.label')),
       number, slider,
-      preset('preset.min', sizes.min), preset('preset.half', sizes.half),
-      preset('preset.pot', sizes.pot), preset('preset.max', sizes.max));
+      el('div', { class: 'segmented' },
+        preset('preset.min', sizes.min), preset('preset.half', sizes.half),
+        preset('preset.pot', sizes.pot), preset('preset.max', sizes.max)));
+    set(S.raiseTo, null);
     buttons.push(go);
   }
 
