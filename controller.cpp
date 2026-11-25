@@ -1,3 +1,6 @@
+#include <cerrno>
+#include <sys/stat.h>
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -28,6 +31,15 @@ static void usage(const char* program){
          "                  (default hands.jsonl; it holds every player's cards)\n"
          "  --no-history    do not save hands\n"
          "  --verbose       print every message sent and received\n"
+         "On the internet:\n"
+         "  --bind ADDR     listen for terminal clients and bots on ADDR only (e.g. 127.0.0.1)\n"
+         "  --web-bind ADDR listen for browsers on ADDR only (127.0.0.1 behind a reverse proxy)\n"
+         "  --trust-proxy   browsers come through a proxy on this machine that sets\n"
+         "                  X-Forwarded-For: count their connections under that address\n"
+         "  --max-connections N  open connections in all (default 200)\n"
+         "  --max-per-ip N  open connections from one address (default 20)\n"
+         "  --console-fifo PATH  also take console commands from this named pipe\n"
+         "                  (made if missing), for a server with no terminal\n"
          "While it runs, type into it: players (who is seated), kick NAME (remove\n"
          "someone from the table), help.\n"
          "Old style still works: %s [port] [seconds per turn] [starting chips]\n",
@@ -44,9 +56,9 @@ static const char* console_help =
 
 // What the person running the server types. Runs until the input ends, so a
 // server started with no terminal (input from /dev/null) simply has no console.
-static void console(transport* tp, lobby* game){
+static void console_lines(transport* tp, lobby* game, std::istream& input){
   std::string line;
-  while(std::getline(std::cin, line)){
+  while(std::getline(input, line)){
     line.erase(0, line.find_first_not_of(" \t"));
     line.erase(line.find_last_not_of(" \t\r") + 1);
     if(line.empty()){
@@ -99,6 +111,25 @@ static void console(transport* tp, lobby* game){
   }
 }
 
+// Typed into the terminal thserver runs in. Ends with the input, so a server
+// started with no terminal (input from /dev/null) simply has no console.
+static void console(transport* tp, lobby* game){
+  console_lines(tp, game, std::cin);
+}
+
+// Under a service manager there is no terminal: commands come through a named
+// pipe instead (echo "kick Ann" > PATH; the answer goes to the log).
+static void console_fifo(transport* tp, lobby* game, std::string path){
+  while(true){
+    std::ifstream input(path);   // waits until someone writes
+    if(!input){
+      printf("Cannot read the console pipe %s\n", path.c_str());
+      return;
+    }
+    console_lines(tp, game, input);
+  }
+}
+
 // Parse a non-negative number; exits with usage on anything else.
 static int number(const char* program, const char* text){
   char* end = nullptr;
@@ -121,6 +152,10 @@ int main(int argc, char* argv[]){
   table_config config;
   config.history_path = "hands.jsonl";
   bool verbose = getenv("TH_VERBOSE") != NULL;
+  std::string bind_address, web_bind_address;
+  bool trust_proxy = false;
+  int max_connections = 200, max_per_ip = 20;
+  std::string console_path;
 
   int positional = 0;
   for(int i = 1; i < argc; i++){
@@ -141,6 +176,24 @@ int main(int argc, char* argv[]){
     }
     else if(arg == "--web" && has_value){
       web_root = argv[++i];
+    }
+    else if(arg == "--bind" && has_value){
+      bind_address = argv[++i];
+    }
+    else if(arg == "--web-bind" && has_value){
+      web_bind_address = argv[++i];
+    }
+    else if(arg == "--console-fifo" && has_value){
+      console_path = argv[++i];
+    }
+    else if(arg == "--trust-proxy"){
+      trust_proxy = true;
+    }
+    else if(arg == "--max-connections" && has_value){
+      max_connections = std::max(1, number(argv[0], argv[++i]));
+    }
+    else if(arg == "--max-per-ip" && has_value){
+      max_per_ip = std::max(1, number(argv[0], argv[++i]));
     }
     else if(arg == "--turn" && has_value){
       config.turn_seconds = number(argv[0], argv[++i]);
@@ -184,6 +237,10 @@ int main(int argc, char* argv[]){
   setvbuf(stdout, NULL, _IOLBF, 0);  // show log lines right away, even when redirected
   transport* tp = transport::get_instance();
   tp->set_verbose(verbose);
+  tp->set_bind(bind_address, web_bind_address);
+  tp->set_trust_proxy(trust_proxy);
+  tp->limits.max_total = max_connections;
+  tp->limits.max_per_address = max_per_ip;
 
   lobby game(tp, config);
   tp->set_listener(&game);
@@ -215,6 +272,14 @@ int main(int argc, char* argv[]){
   }
   printf("Type tables to see the tables, players to see who is seated, kick NAME to remove someone, help for more\n");
   std::thread(console, tp, &game).detach();
+  if(!console_path.empty()){
+    struct stat info;
+    if(stat(console_path.c_str(), &info) != 0 && mkfifo(console_path.c_str(), 0600) != 0){
+      printf("Cannot make the console pipe %s: %s\n", console_path.c_str(), strerror(errno));
+      return 1;
+    }
+    std::thread(console_fifo, tp, &game, console_path).detach();
+  }
 
   // Turn time limit and next-hand countdown. Same lock as message handling.
   while(true){

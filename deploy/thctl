@@ -1,0 +1,19 @@
+#!/bin/bash
+# Type a console command into the running server and show its answer.
+#   sudo thctl tables
+#   sudo thctl players
+#   sudo thctl kick Ann 3
+set -e
+if [ $# -eq 0 ]; then
+  echo "Usage: thctl tables | players | kick NAME [TABLE] | help"
+  exit 1
+fi
+PIPE=/run/thserver/console
+if [ ! -p "$PIPE" ]; then
+  echo "The server is not running (no $PIPE). Try: sudo systemctl status thserver"
+  exit 1
+fi
+SINCE=$(date '+%Y-%m-%d %H:%M:%S')
+echo "$*" > "$PIPE"
+sleep 0.5
+journalctl -u thserver --since "$SINCE" --no-pager -o cat

@@ -5,6 +5,7 @@
 #include <mutex>
 #include <set>
 #include <string>
+#include "connection_limits.h"
 #include "observer.h"
 
 // The network. Two doors lead to the same table:
@@ -27,6 +28,9 @@ class transport: public sender{
     std::mutex dispatch_lock;
     std::mutex ws_lock;
     std::set<int> ws_clients;   // clients that get WebSocket frames instead of lines
+    std::string bind_address;   // "" = every address; "127.0.0.1" = this machine only
+    std::string web_bind_address;
+    bool trust_proxy = false;   // browsers come through our own proxy on this machine
 
     void accept_loop(int listen_fd, bool web);
     void read_websocket(int client_socket, const std::string& already_read);
@@ -49,6 +53,14 @@ class transport: public sender{
     void set_web_root(const std::string& root){ web_root = root; }
     // One browser connection: answers a file request, or becomes a WebSocket.
     void serve_http(int client_socket);
+
+    // On the internet: how many connections, in all and per address.
+    connection_limits limits;
+    // Listen on one address only (e.g. 127.0.0.1 behind a reverse proxy).
+    void set_bind(const std::string& game, const std::string& web){ bind_address = game; web_bind_address = web; }
+    // Browsers arrive through a proxy on this machine that says who they are
+    // (X-Forwarded-For): count them under that address.
+    void set_trust_proxy(bool trust){ trust_proxy = trust; }
 
     void set_listener(observer* ob);
     void set_verbose(bool v){verbose = v;};

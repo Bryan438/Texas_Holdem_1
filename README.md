@@ -52,6 +52,12 @@ make                      # builds ./thserver, ./thstats, ./thbot, ./thmatch and
 ./thserver --verbose      # also print every message sent and received
 ./thserver --help
 ```
+On the internet, behind a reverse proxy with HTTPS: [deploy/README.md](deploy/README.md)
+(one script sets up a fresh Ubuntu server). The options it uses: `--bind` / `--web-bind`
+(listen on one address only), `--trust-proxy` (count browsers by the address the proxy
+reports), `--max-connections` / `--max-per-ip` (default 200 / 20), `--console-fifo PATH`
+(console commands through a named pipe, for a server with no terminal).
+
 While the server runs you can type into its terminal:
 ```
 tables           the tables that are open: blinds, chips, who is seated, host, private or not
