@@ -27,6 +27,8 @@ struct bot_config{
   double delay = 1.5;      // seconds to "think" before each move
   bool starts_hands = false;
   unsigned seed = 0;       // 0 = random
+  int table = 0;           // 0 = the main table
+  std::string password;    // for a private table
 };
 
 static std::mutex print_mutex;
@@ -106,6 +108,8 @@ static std::string describe(const bot_move& move, const json& state){
 // away (a name that is taken, a full table): trying again would not help.
 static bool play(const bot_config& cfg, int sock, std::string& token, std::mt19937& rng){
   json join = {{"type", "join"}, {"name", cfg.name}, {"bot", true}};
+  if(cfg.table > 0) join["table"] = cfg.table;
+  if(!cfg.password.empty()) join["password"] = cfg.password;
   if(!token.empty()) join["token"] = token;
   if(!send_line(sock, join)) return true;
 
@@ -247,6 +251,8 @@ static void usage(const char* program){
          "  --delay S      seconds to think before each move (default 1.5)\n"
          "  --start        start each hand when 2+ players are ready, like typing s\n"
          "                 (by default the bot waits for a person to start)\n"
+         "  --table N      sit at table N of the server's lobby (default: the main table)\n"
+         "  --password PW  that table's password, if it is private\n"
          "  --seed N       repeat the same choices\n"
          "  --model FILE   the network the \"rl\" style plays with, from rl/train.py\n"
          "                 (default: the one built into this program)\n\n"
@@ -291,6 +297,16 @@ int main(int argc, char* argv[]){
     }
     else if(arg == "--seed" && has_value){
       cfg.seed = (unsigned)strtoul(argv[++i], nullptr, 10);
+    }
+    else if(arg == "--table" && has_value){
+      cfg.table = atoi(argv[++i]);
+      if(cfg.table < 1){
+        printf("--table needs a table's number\n");
+        return 1;
+      }
+    }
+    else if(arg == "--password" && has_value){
+      cfg.password = argv[++i];
     }
     else if(arg == "--start"){
       cfg.starts_hands = true;
