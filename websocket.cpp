@@ -66,6 +66,7 @@ static const char* status_text(int status){
     case 403: return "Forbidden";
     case 404: return "Not Found";
     case 405: return "Method Not Allowed";
+    case 503: return "Service Unavailable";
     default: return "Error";
   }
 }

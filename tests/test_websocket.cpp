@@ -346,3 +346,37 @@ TEST(transport_reports_a_port_that_is_taken){
   CHECK(!tp->start_web_with_thread(port, "web"));
   close(taken);
 }
+
+// On the internet: one address cannot hold every connection.
+TEST(connection_limits_count_in_all_and_per_address){
+  connection_limits l;
+  l.max_total = 4;
+  l.max_per_address = 2;
+  CHECK(l.admit(10, "1.2.3.4"));
+  CHECK(l.admit(11, "1.2.3.4"));
+  CHECK(!l.admit(12, "1.2.3.4"));       // a third from the same address
+  CHECK(l.admit(12, "5.6.7.8"));
+  CHECK(l.admit(13, ""));               // through the proxy, address not known yet
+  CHECK(!l.admit(14, "9.9.9.9"));       // four open: full
+  CHECK_EQ(l.open(), 4);
+
+  // The proxied one turns out to be 1.2.3.4, which already has two.
+  CHECK(!l.rekey(13, "1.2.3.4"));
+  CHECK(l.rekey(13, "5.6.7.8"));
+  CHECK(!l.admit(15, "5.6.7.8"));
+
+  l.release(10);
+  l.release(10);                        // twice: counted once
+  l.release(99);                        // never counted (a test's socketpair)
+  CHECK_EQ(l.open(), 3);
+  CHECK(l.admit(14, "1.2.3.4"));
+  CHECK(!l.admit(15, "9.9.9.9"));
+}
+
+TEST(forwarded_client_takes_the_address_our_proxy_added){
+  CHECK(forwarded_client("") == "");
+  CHECK(forwarded_client("203.0.113.7") == "203.0.113.7");
+  // Whatever the browser sent comes first; the proxy appends the real one.
+  CHECK(forwarded_client("6.6.6.6, 203.0.113.7") == "203.0.113.7");
+  CHECK(forwarded_client(" 2001:db8::1 ") == "2001:db8::1");
+}

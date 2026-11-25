@@ -1,0 +1,39 @@
+# systemd service for thserver. deploy/setup.sh installs it as
+# /etc/systemd/system/thserver.service.
+[Unit]
+Description=Texas Hold'em server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=poker
+Group=poker
+WorkingDirectory=/var/lib/thserver
+# Browsers come in through Caddy (HTTPS) on this machine, so both ports listen
+# on 127.0.0.1 only. Commands for the console: deploy/thctl.
+ExecStart=/opt/thserver/thserver --web /opt/thserver/web \
+    --bind 127.0.0.1 --web-bind 127.0.0.1 --trust-proxy \
+    --history /var/lib/thserver/hands.jsonl \
+    --console-fifo /run/thserver/console
+StandardInput=null
+Restart=on-failure
+RestartSec=2
+RuntimeDirectory=thserver
+RuntimeDirectoryMode=0750
+
+# It needs nothing of the system but its own folder.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ReadWritePaths=/var/lib/thserver
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+LimitNOFILE=4096
+
+[Install]
+WantedBy=multi-user.target

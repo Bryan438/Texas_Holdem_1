@@ -7,6 +7,7 @@
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <thread>
@@ -41,7 +42,7 @@ static bool send_all(int client_socket, const std::string& data){
   return true;
 }
 
-static int listen_on(int port){
+static int listen_on(int port, const std::string& address){
   // A client that disconnects must not kill the server on the next send().
   signal(SIGPIPE, SIG_IGN);
 
@@ -58,6 +59,11 @@ static int listen_on(int port){
   addr.sin_family = AF_INET;
   addr.sin_addr.s_addr = INADDR_ANY;
   addr.sin_port = htons(port);
+  if(!address.empty() && inet_pton(AF_INET, address.c_str(), &addr.sin_addr) != 1){
+    printf("Not an IPv4 address to listen on: %s\n", address.c_str());
+    close(fd);
+    return -1;
+  }
 
   if(bind(fd, (struct sockaddr*)&addr, sizeof(addr)) < 0){
     if(errno == EADDRINUSE){
@@ -88,6 +94,27 @@ void transport::accept_loop(int listen_fd, bool web){
     // A client that stops reading must not freeze the whole table.
     timeval timeout = {2, 0};
     setsockopt(client_socket, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+    // Notice a peer that vanished without closing (a phone that lost its signal).
+    int on = 1;
+    setsockopt(client_socket, SOL_SOCKET, SO_KEEPALIVE, &on, sizeof(on));
+#ifdef TCP_KEEPIDLE
+    int idle = 60, interval = 15, probes = 4;
+    setsockopt(client_socket, IPPROTO_TCP, TCP_KEEPIDLE, &idle, sizeof(idle));
+    setsockopt(client_socket, IPPROTO_TCP, TCP_KEEPINTVL, &interval, sizeof(interval));
+    setsockopt(client_socket, IPPROTO_TCP, TCP_KEEPCNT, &probes, sizeof(probes));
+#endif
+
+    // Too many open already, in all or from this address: turn it away. Behind
+    // our own proxy every browser comes from 127.0.0.1; it is counted under
+    // its real address once its request says what that is.
+    std::string address = inet_ntoa(client_addr.sin_addr);
+    bool proxied = web && trust_proxy && address == "127.0.0.1";
+    if(!limits.admit(client_socket, proxied ? "" : address)){
+      send_all(client_socket, web ? http_response(503, "text/plain; charset=utf-8", "Too many connections\n")
+                                  : "{\"type\":\"error\",\"code\":\"too_many\",\"message\":\"too many connections\"}\n");
+      close(client_socket);
+      continue;
+    }
 
     if(web){
       // Most of these are file requests: the game hears about a browser only
@@ -104,7 +131,7 @@ void transport::accept_loop(int listen_fd, bool web){
 }
 
 int transport::start_server(int port){
-  sockfd = listen_on(port);
+  sockfd = listen_on(port, bind_address);
   if(sockfd == -1){
     return -1;
   }
@@ -116,7 +143,7 @@ int transport::start_server(int port){
 // Open the port here, so a port that is taken is reported to the caller
 // instead of silently ending a background thread.
 bool transport::start_with_thread(int port){
-  sockfd = listen_on(port);
+  sockfd = listen_on(port, bind_address);
   if(sockfd == -1){
     return false;
   }
@@ -127,7 +154,7 @@ bool transport::start_with_thread(int port){
 
 int transport::start_web_server(int port, const std::string& root){
   web_root = root;
-  web_sockfd = listen_on(port);
+  web_sockfd = listen_on(port, web_bind_address);
   if(web_sockfd == -1){
     return -1;
   }
@@ -136,7 +163,7 @@ int transport::start_web_server(int port, const std::string& root){
 }
 
 bool transport::start_web_with_thread(int port, const std::string& root){
-  web_sockfd = listen_on(port);
+  web_sockfd = listen_on(port, web_bind_address);
   if(web_sockfd == -1){
     return false;
   }
@@ -188,6 +215,7 @@ void transport::finish(int client_socket){
     std::lock_guard<std::mutex> guard(ws_lock);
     ws_clients.erase(client_socket);
   }
+  limits.release(client_socket);   // before close: the number may be reused at once
   close(client_socket);
   printf("Client %d disconnected\n", client_socket);
 }
@@ -206,6 +234,7 @@ void transport::serve_http(int client_socket){
   while((end = head.find("\r\n\r\n")) == std::string::npos){
     int n = head.size() > 16 * 1024 ? 0 : recv(client_socket, chunk, sizeof(chunk), 0);
     if(n <= 0){
+      limits.release(client_socket);
       close(client_socket);
       return;
     }
@@ -223,9 +252,14 @@ void transport::serve_http(int client_socket){
     answer = http_response(405, "text/plain; charset=utf-8", "Only GET is supported\n");
   }
   else if(is_websocket_upgrade(request)){
+    // Behind our proxy: who is this browser really?
+    std::string from = trust_proxy ? forwarded_client(request.header("x-forwarded-for")) : "";
     if(!same_origin(request)){
       answer = http_response(403, "text/plain; charset=utf-8",
                              "Open the game from this server's own page\n");
+    }
+    else if(!limits.rekey(client_socket, from)){
+      answer = http_response(503, "text/plain; charset=utf-8", "Too many connections from your address\n");
     }
     else if(send_all(client_socket, websocket_accept_response(request))){
       timeval none = {0, 0};
@@ -234,7 +268,7 @@ void transport::serve_http(int client_socket){
         std::lock_guard<std::mutex> guard(ws_lock);
         ws_clients.insert(client_socket);
       }
-      printf("Client %d connected from a browser\n", client_socket);
+      printf("Client %d connected from a browser%s\n", client_socket, from.empty() ? "" : (" (" + from + ")").c_str());
       run_locked([&]{
         if(p_listener) p_listener->on_connect(client_socket);
       });
@@ -258,6 +292,7 @@ void transport::serve_http(int client_socket){
     }
   }
   send_all(client_socket, answer);
+  limits.release(client_socket);
   close(client_socket);
 }
 
