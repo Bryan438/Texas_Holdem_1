@@ -64,6 +64,7 @@ tables           the tables that are open: blinds, chips, who is seated, host, p
 players          who is seated at each table: chips, person or bot, here / disconnected / leaving
 kick NAME        remove someone from their table (a running hand is folded for them);
 kick NAME 3      ...at table 3, when the name sits at more than one table
+close 3          close table 3 (not the main one): everyone there goes back to the lobby
 help
 ```
 A server started without a terminal (input from `/dev/null`) simply has no console.
@@ -140,13 +141,16 @@ Lobby (client -> server)
     // blinds 1/2, 2/5 or 5/10; chips 20-500 big blinds (default 100); password optional
     // answer: {"type":"table_created","table":3}; then join it
 {"type":"join","table":3,"name":"Bryan","password":"..."}   // sit down at table 3
+{"type":"close_table"}   // the host closes the table they sit at (not the main one)
 ```
 `join` without `table` sits at the main table (table 1), so clients written before the lobby,
 and `thbot`, work unchanged. Server -> client: `{"type":"lobby","tables":[{"id","name","main",
 "private","blinds","chips","seats","people","max","playing","host"}],"max_tables","can_create"}`,
 on connecting, on getting up from a table, and whenever the list changes. Errors: `no_table`,
-`bad_password`, `lobby_full`, `table_name`, `bad_blinds`, `bad_chips`, `at_table`. A table that
-closes under a bot still sitting there sends it `left` with `reason: closed`.
+`bad_password`, `lobby_full`, `table_name`, `bad_blinds`, `bad_chips`, `at_table`, and for
+`close_table` `main_table` or `not_host`. When a table closes (its host or the server's `close`
+closed it, or it stood empty for 10 minutes) everyone still at it gets `left` with
+`reason: closed` (and `by`: who closed it) and is back in the lobby; a hand being played is dropped.
 
 At a table (client -> server)
 ```jsonc
@@ -165,6 +169,9 @@ At a table (client -> server)
 {"type":"add_bot","style":"rl","count":2}   // the host seats bots that the server plays itself
 {"type":"remove_bot","seat":3}              // the host, between hands: one of those bots goes
 {"type":"kick","seat":2}                    // the host sends someone away
+{"type":"chat","text":"nice hand"}          // talk to the table: up to 200 characters, 5 messages in 10 s
+{"type":"chat","phrase":"gg"}               // a quick phrase: good_luck, nice_hand, well_played, thinking, wow, gg
+{"type":"mute","seat":2,"muted":true}       // the host stops (false: allows again) someone's chat
 ```
 
 Server -> client
@@ -188,8 +195,12 @@ Server -> client
   (`not_your_turn`, `name_taken`, `table_full`, ...)
 - `hand_summary` - the hand that just ended: actions by street, board, showdown, winners;
   hole cards only for yourself and for hands shown at showdown
-- `left` - you are no longer seated (`reason`: `left`, or `kicked` by the server); join
+- `left` - you are no longer seated (`reason`: `left`, `kicked`, or `closed` with the table); join
   again to play
+- `chat` - someone at the table said something: `name`, `text`, and `phrase` for a quick
+  phrase (`text` is then its English words). Only people at the same table get it; bots do
+  not chat. A seat the host muted has `muted: true` in `state`
+- `chat_history` - right after `welcome`: the table's last 50 `chat` messages, oldest first
 
 Rules handled by the server: turn order, check/call/raise options, minimum raise (a short
 all-in does not reopen betting), side pots, heads-up blinds, button rotation. A bet that

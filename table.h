@@ -2,9 +2,12 @@
 #define _TABLE_H_
 
 #include <cstdint>
+#include <deque>
 #include <functional>
+#include <map>
 #include <memory>
 #include <random>
+#include <set>
 #include <string>
 #include <vector>
 #include "third_party/json.hpp"
@@ -71,6 +74,12 @@ struct hand_result_entry{
 //   longer than the grace period, the next person in seat order takes over.
 //   Only the host deals ("start") and adds or removes bots. With no person at
 //   the table (bots only) anyone may deal.
+//   {"type":"chat","text":"nice hand"}   say something to everyone at the table
+//   {"type":"chat","phrase":"gg"}        a quick phrase: good_luck, nice_hand,
+//                                        well_played, thinking, wow, gg
+//     Up to 200 characters, at most 5 messages in 10 seconds; bots do not chat.
+//   {"type":"mute","seat":2,"muted":true}   the host stops (or, false, lets again)
+//                                           someone's messages reach the table
 //   {"type":"add_bot","style":"rl","count":2}   a person seats bots that the server runs
 //   {"type":"remove_bot","seat":3}               between hands, one of those bots leaves
 //
@@ -84,6 +93,10 @@ struct hand_result_entry{
 //   {"type":"error","message":"...","code":"not_your_turn"}
 //   {"type":"hand_summary", ...}  the hand that just ended, as this player may see it
 //   {"type":"left","reason":"left|kicked"}  you are no longer seated (join again to play)
+//   {"type":"chat","name":"Ann","text":"nice hand"}   someone at the table said it;
+//     a quick phrase also has "phrase":"nice_hand" (text is then its English words)
+//   {"type":"chat_history","messages":[...]}  right after "welcome": the table's
+//     last 50 chat messages, oldest first
 class table: public observer{
   public:
     using clock_fn = std::function<int64_t()>;  // milliseconds, monotonic
@@ -170,6 +183,17 @@ class table: public observer{
     };
     std::vector<departed_player> departed;
 
+    // What was said at the table: the last CHAT_KEEP lines for people who sit
+    // down later, when each person last spoke (to slow down a flood), and who
+    // the host has muted (by name, so getting up and back does not undo it).
+    std::deque<json> chat_log;
+    std::map<std::string, std::deque<int64_t>> chat_times;
+    std::set<std::string> muted;
+    static constexpr int CHAT_KEEP = 50;
+    static constexpr int CHAT_MAX_CHARS = 200;
+    static constexpr int CHAT_BURST = 5;            // messages ...
+    static constexpr int CHAT_WINDOW_MS = 10000;    // ... in this long
+
     std::string vote_kind;              // "" = none, "end" or "new"
     std::string vote_by;
     std::vector<std::string> vote_yes;
@@ -187,6 +211,9 @@ class table: public observer{
     void handle_vote(int client, const json& msg);
     void handle_kick(int client, const json& msg);
     void handle_rebuy(int client);
+    void handle_chat(int client, const json& msg);
+    void handle_mute(int client, const json& msg);
+    void welcome(int client, int seat, const std::string& name, const std::string& token);
     bool leads(int seat, int client, const std::string& what);
     bool update_host();
 

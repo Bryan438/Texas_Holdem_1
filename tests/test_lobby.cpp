@@ -259,6 +259,56 @@ TEST(the_console_kicks_by_name_and_table){
   CHECK(h.l.roster().find("Main table") != std::string::npos);
 }
 
+TEST(the_host_closes_their_table_and_everyone_goes_back_to_the_lobby){
+  hall h;
+  for(int c : {1, 2, 3}) h.connect(c);
+  int id = h.create(1);
+  h.join(1, "Ann", id);
+  h.join(2, "Bob", id);
+  h.join(3, "Cid", lobby::MAIN);
+  h.send(1, {{"type", "add_bot"}, {"count", 2}});
+  h.send(1, {{"type", "start"}});               // a hand is being played: it is dropped
+  CHECK(h.l.find(id)->get_stage() != WAITING);
+
+  h.send(2, {{"type", "close_table"}});
+  CHECK(h.error_code(2) == "not_host");
+  CHECK(h.last(2, "error").value("message", "").find("Ann") != std::string::npos);
+  h.send(3, {{"type", "close_table"}});
+  CHECK(h.error_code(3) == "main_table");
+
+  int lists = h.count(2, "lobby");
+  h.send(1, {{"type", "close_table"}});
+  CHECK(h.l.find(id) == nullptr);
+  for(int c : {1, 2}){
+    json left = h.last(c, "left");
+    CHECK(left.value("reason", "") == "closed");
+    CHECK(left.value("by", "") == "Ann");
+    CHECK_EQ(h.l.table_of(c), -1);
+    CHECK_EQ(h.tables(c).size(), 1);           // back in the lobby, without that table
+  }
+  CHECK_EQ(h.count(2, "lobby"), lists + 1);      // the list once, not twice
+  CHECK_EQ(h.l.table_of(3), lobby::MAIN);        // the main table plays on
+  // In the lobby, there is no table to close.
+  h.send(1, {{"type", "close_table"}});
+  CHECK(h.error_code(1) == "join_first");
+}
+
+TEST(the_console_closes_any_table_but_the_main_one){
+  hall h;
+  h.connect(1);
+  int id = h.create(1);
+  h.join(1, "Ann", id);
+  std::string error;
+  CHECK(!h.l.close(lobby::MAIN, error));
+  CHECK(error.find("main table") != std::string::npos);
+  CHECK(!h.l.close(99, error));
+  CHECK(error.find("no table 99") != std::string::npos);
+  CHECK(h.l.close(id, error));
+  CHECK(h.last(1, "left").value("reason", "") == "closed");
+  CHECK(!h.last(1, "left").contains("by"));      // the server, not a person
+  CHECK_EQ(h.l.table_count(), 1);
+}
+
 TEST(hands_are_saved_with_their_table){
   hall h;
   for(int c = 1; c <= 2; c++) h.connect(c);

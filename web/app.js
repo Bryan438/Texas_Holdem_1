@@ -5,7 +5,7 @@
 
 import { cardParts, seatPosition, chipPlace, raiseSizes, clampRaise, decisionKey, actionAsEvent, actionsByStreet,
          boardOn, formatChips, formatSeconds } from './logic.js';
-import { translate, handName, eventPieces, errorText } from './i18n.js';
+import { translate, hasString, handName, eventPieces, errorText } from './i18n.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -44,6 +44,10 @@ const S = {
   nextHandAt: 0,
   voteEndsAt: 0,
   noticeTimer: 0,
+  side: remembered(sessionStorage, 'th.side') === 'chat' ? 'chat' : 'log',   // what the side panel shows
+  chat: [],                    // what was said at this table, oldest first
+  unread: 0,                   // chat lines come in while the hand log was showing
+  bubbles: new Map(),          // name -> { text, until }: what they just said, over their seat
   drawn: null,                 // the state the table was last drawn from, for motion
   dealing: null,               // { hand, at }: cards of this hand are on their way
 };
@@ -192,6 +196,20 @@ function onMessage(m) {
     if (!m.game_over && $('standings').open) $('standings').close();
     S.wasOver = Boolean(m.game_over);
   }
+  else if (m.type === 'chat_history') {
+    // Sent on every (re)join: it replaces what this page had.
+    S.chat = Array.isArray(m.messages) ? m.messages : [];
+    S.unread = 0;
+    renderChat();
+  }
+  else if (m.type === 'chat') {
+    S.chat.push(m);
+    if (S.chat.length > 200) S.chat.splice(0, S.chat.length - 200);
+    if (m.name !== myOwnName() && S.side !== 'chat') S.unread++;
+    S.bubbles.set(m.name, { text: chatWords(m), until: Date.now() + 5000 });
+    renderChat();
+    popBubble(m.name);
+  }
   else if (m.type === 'event') {
     S.log.push(m);
     if (S.log.length > 400) S.log.splice(0, S.log.length - 400);
@@ -216,8 +234,12 @@ function onMessage(m) {
     S.joined = false;
     S.state = null;
     S.drawn = null;
+    S.chat = [];
+    S.unread = 0;
+    S.bubbles.clear();
     S.wasOver = false;
-    S.joinError = m.reason === 'closed' ? { text: t('left.closed') }
+    S.joinError = m.reason === 'closed' ? (m.by === S.wantName ? null   // we closed it ourselves
+                                           : { text: m.by ? t('left.closed.by', { by: m.by }) : t('left.closed') })
                 : m.reason !== 'kicked' ? null
                 : { text: m.by ? t('left.kicked.by', { by: m.by }) : t('left.kicked') };
     forgetTable();
@@ -270,12 +292,17 @@ function renderStatic() {
   $('join-label').textContent = t('join.name');
   $('create-open').textContent = t('create.open');
   $('join-hint').textContent = t('lobby.hint');
-  $('log-title').textContent = t('log.title');
+  $('tab-log').textContent = t('log.title');
+  $('tab-chat-label').textContent = t('side.chat');
+  $('chat-send').setAttribute('aria-label', t('chat.send'));
+  $('chat-send').title = t('chat.send');
+  renderPhrases();
   $('summary-button').textContent = t('summary.button');
   $('summary-button').hidden = !S.summary;
   $('end-game').textContent = t('manage.end');
   $('new-game').textContent = t('manage.new');
   $('leave').textContent = t('manage.leave');
+  $('close-table').textContent = t('manage.close');
   renderConnection();
 }
 
@@ -284,6 +311,7 @@ function renderScreen() {
   $('game').hidden = !S.joined;
   if (!S.joined) {
     $('manage').hidden = true;
+    $('meta').textContent = '';   // no table: nothing to say about one
     document.title = t('title');
   }
   $('join-error').textContent = !S.joinError ? '' : S.joinError.text || errorText(S.lang, S.joinError);
@@ -429,6 +457,8 @@ function renderGame() {
   // happens at once; with other people they all have to agree).
   $('manage').hidden = !st.seats[st.you];
   $('end-game').hidden = Boolean(st.game_over);
+  // The host may close a table of their own; the main table always stays.
+  $('close-table').hidden = !(st.host === st.you && st.table && st.table.id !== 1);
   $('meta').textContent = (st.table ? tableName(st.table.id, st.table.name) + ' · ' : '') +
                           (st.hand > 0 ? t('meta.hand', { n: st.hand }) + ' · ' : '') +
                           t('meta.blinds', { sb: st.blinds[0], bb: st.blinds[1] });
@@ -437,6 +467,7 @@ function renderGame() {
   const fresh = st !== S.drawn;
   const before = fresh ? chipsBefore() : null;
   renderVote(st);
+  renderChatControls(st);
   renderSeats(st);
   renderCenter(st);
   renderMine(st);
@@ -499,22 +530,26 @@ function renderSeats(st) {
     const classes = ['seat', mine && 'me', turn && 'turn', winners.includes(seat.seat) && 'winner', out && 'out'];
     // The host may send anyone else away: a bot at once, a person after asking.
     const kick = () => send({ type: 'kick', seat: seat.seat });
-    const remove = st.host === st.you && !mine && seat.status !== 'left'
-      ? el('button', { class: 'remove', type: 'button', title: t('kick.label', { name: seat.name }),
-                       'aria-label': t('kick.label', { name: seat.name }),
-                       onclick: () => (seat.bot ? kick() : confirmThen(t('confirm.kick', { name: seat.name }), t('kick.label', { name: seat.name }), kick)) },
-           '×')
-      : null;
+    // A bot goes at once (×); for a person a menu: mute in chat, or remove.
+    const hosting = st.host === st.you && !mine && seat.status !== 'left';
+    const remove = !hosting ? null
+      : seat.bot ? el('button', { class: 'remove', type: 'button', title: t('kick.label', { name: seat.name }),
+                                  'aria-label': t('kick.label', { name: seat.name }), onclick: kick }, '×')
+      : el('button', { class: 'remove more', type: 'button', title: t('seat.menu', { name: seat.name }),
+                       'aria-label': t('seat.menu', { name: seat.name }), 'aria-haspopup': 'menu',
+                       onclick: (e) => openSeatMenu(seat.name, e.currentTarget) }, '•••');
     // The cards stand above a name plate: picture, name, chips, what is happening.
     nodes.push(el('div', { class: classes.filter(Boolean).join(' '), 'data-seat': seat.seat, style: `left:${at.x}%;top:${at.y}%` },
       el('div', { class: 'cards' }, cards),
       el('div', { class: 'plate' },
         remove,
         el('div', { class: 'badges' }, badges),
+        bubbleEl(seat.name),
         avatarEl(seat),
         el('div', { class: 'who' },
           el('div', { class: 'name', title: seat.name }, mine ? `${seat.name} (${t('you')})` : seat.name),
-          el('div', { class: 'stack' }, formatChips(seat.stack), seat.bot && el('span', { class: 'tag' }, t('bot.tag'))),
+          el('div', { class: 'stack' }, formatChips(seat.stack), seat.bot && el('span', { class: 'tag' }, t('bot.tag')),
+             seat.muted && el('span', { class: 'tag' }, t('muted.tag'))),
           // On a narrow screen the bet is written in the seat; on a wide one it lies on the felt.
           seat.bet > 0 && el('div', { class: 'betline' }, t('bet.label') + ' ' + formatChips(seat.bet)),
           turn && S.turnEndsAt && !away ? el('div', { class: 'timer' })
@@ -879,6 +914,147 @@ function renderLog(only) {
   if (atBottom || !only) log.scrollTop = log.scrollHeight;
 }
 
+// ---------------------------------------------------------------- chat
+
+const PHRASES = ['good_luck', 'nice_hand', 'well_played', 'thinking', 'wow', 'gg'];
+
+const myOwnName = () => (S.state && S.state.seats[S.state.you] ? S.state.seats[S.state.you].name : S.wantName);
+
+// A quick phrase in the reader's language; anything else as it was typed.
+const chatWords = (m) => (m.phrase && hasString('en', 'phrase.' + m.phrase) ? t('phrase.' + m.phrase) : String(m.text || ''));
+
+// The side panel shows the hand log or the chat; the chat tab counts what came in unseen.
+function renderSide() {
+  const chat = S.side === 'chat';
+  if (chat) S.unread = 0;
+  $('log').hidden = chat;
+  $('chat').hidden = !chat;
+  $('tab-log').classList.toggle('on', !chat);
+  $('tab-chat').classList.toggle('on', chat);
+  $('tab-log').setAttribute('aria-selected', String(!chat));
+  $('tab-chat').setAttribute('aria-selected', String(chat));
+  $('unread').hidden = S.unread === 0;
+  $('unread').textContent = S.unread > 99 ? '99+' : String(S.unread);
+}
+
+function showSide(which) {
+  S.side = which;
+  remember(sessionStorage, 'th.side', which);
+  renderSide();
+  if (which === 'chat') {
+    const lines = $('chat-lines');
+    lines.scrollTop = lines.scrollHeight;
+  }
+  else {
+    $('log').scrollTop = $('log').scrollHeight;
+  }
+}
+
+// Like Messages: your own lines on the right in blue, others on the left in
+// grey with the name over the first of a run.
+function renderChat() {
+  const box = $('chat-lines');
+  const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
+  const me = myOwnName();
+  if (S.chat.length === 0) {
+    fill(box, el('li', { class: 'empty' }, t('chat.empty')));
+  }
+  else {
+    fill(box, S.chat.map((m, i) => {
+      const mine = m.name === me;
+      const run = i > 0 && S.chat[i - 1].name === m.name;
+      return el('li', { class: 'msg' + (mine ? ' mine' : '') + (run ? ' run' : '') },
+        !mine && !run ? el('div', { class: 'from' }, m.name) : null,
+        el('div', { class: 'text' }, chatWords(m)));
+    }));
+  }
+  const last = S.chat[S.chat.length - 1];
+  if (atBottom || (last && last.name === me)) box.scrollTop = box.scrollHeight;
+  renderSide();
+}
+
+function renderPhrases() {
+  fill($('phrases'), PHRASES.map((id) => el('button', { type: 'button', class: 'phrase',
+    onclick: () => send({ type: 'chat', phrase: id }) }, t('phrase.' + id))));
+  $('phrases').setAttribute('aria-label', t('chat.phrases'));
+  renderChatControls(S.state);
+  renderChat();
+}
+
+// Muted by the host: nothing to type into.
+function renderChatControls(st) {
+  const me = st && st.seats[st.you];
+  const muted = Boolean(me && me.muted);
+  $('chat-input').disabled = muted;
+  $('chat-send').disabled = muted;
+  $('chat-input').placeholder = t(muted ? 'chat.muted' : 'chat.placeholder');
+  for (const b of $('phrases').children) b.disabled = muted;
+}
+
+// What someone just said, in a bubble over their seat for a few seconds.
+function bubbleEl(name, popping = false) {
+  const bubble = S.bubbles.get(name);
+  if (!bubble || Date.now() >= bubble.until) return null;
+  return el('div', { class: 'say' + (popping ? ' pop' : ''), 'data-name': name, 'aria-hidden': 'true' },
+            el('span', {}, bubble.text));
+}
+
+function popBubble(name) {
+  if (!S.state) return;
+  const seat = S.state.seats.find((s) => s.name === name);
+  const plate = seat && document.querySelector(`#seats .seat[data-seat="${seat.seat}"] .plate`);
+  if (!plate) return;
+  for (const old of plate.querySelectorAll('.say')) old.remove();
+  const bubble = bubbleEl(name, true);
+  if (bubble) plate.append(bubble);
+}
+
+// The host's menu for a person's seat, like a context menu: mute or let chat
+// again, and remove from the table.
+function openSeatMenu(name, anchor) {
+  closeMenu();
+  const find = () => S.state && S.state.seats.find((s) => s.name === name);
+  const seat = find();
+  if (!seat) return;
+  const item = (label, run, danger) => el('button', { type: 'button', role: 'menuitem', class: danger ? 'danger' : '',
+    onclick: () => { closeMenu(); const now = find(); if (now) run(now); } }, label);
+  const kick = (now) => confirmThen(t('confirm.kick', { name }), t('kick.label', { name }),
+                                    () => { const still = find(); if (still) send({ type: 'kick', seat: still.seat }); });
+  const menu = el('div', { id: 'seat-menu', class: 'menu', role: 'menu', 'aria-label': t('seat.menu', { name }) },
+    item(t(seat.muted ? 'menu.unmute' : 'menu.mute'), (now) => send({ type: 'mute', seat: now.seat, muted: !now.muted })),
+    item(t('menu.remove'), kick, true));
+  document.body.append(menu);
+  const at = anchor.getBoundingClientRect();
+  const left = Math.min(at.left, window.innerWidth - menu.offsetWidth - 8);
+  const below = at.bottom + 6 + menu.offsetHeight < window.innerHeight;
+  menu.style.left = Math.max(8, left) + 'px';
+  menu.style.top = (below ? at.bottom + 6 : at.top - 6 - menu.offsetHeight) + 'px';
+  menu.querySelector('button').focus();
+}
+
+function closeMenu() {
+  const menu = $('seat-menu');
+  if (menu) menu.remove();
+}
+
+document.addEventListener('pointerdown', (e) => {
+  const menu = $('seat-menu');
+  if (menu && !menu.contains(e.target) && !e.target.closest('.more')) closeMenu();
+}, true);
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeMenu(); });
+window.addEventListener('resize', closeMenu);
+
+$('tab-log').addEventListener('click', () => showSide('log'));
+$('tab-chat').addEventListener('click', () => showSide('chat'));
+$('chat-form').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const input = $('chat-input');
+  const text = input.value.trim();
+  if (!text) return;
+  send({ type: 'chat', text });
+  input.value = '';
+});
+
 function renderSummary() {
   const sum = S.summary;
   if (!sum) return;
@@ -990,13 +1166,14 @@ function showAddBots() {
 }
 
 // Ask before something that cannot be undone.
-function confirmThen(question, yes, then) {
+// `danger`: the answer is drawn red, for something that cannot be taken back.
+function confirmThen(question, yes, then, danger = false) {
   const box = $('confirm');
   fill(box,
     el('p', {}, question),
     el('div', { class: 'foot' },
       el('button', { type: 'button', onclick: () => box.close() }, t('confirm.cancel')),
-      el('button', { class: 'primary', type: 'button', onclick: () => { box.close(); then(); } }, yes)));
+      el('button', { class: danger ? 'primary danger' : 'primary', type: 'button', onclick: () => { box.close(); then(); } }, yes)));
   box.showModal();
 }
 
@@ -1008,6 +1185,15 @@ function notice(text) {
 
 // Clocks that run between messages from the server.
 function tick() {
+  for (const [name, bubble] of S.bubbles) {
+    if (Date.now() < bubble.until) continue;
+    S.bubbles.delete(name);
+    for (const say of document.querySelectorAll('.say')) {
+      if (say.dataset.name !== name) continue;
+      say.classList.add('fade');
+      setTimeout(() => say.remove(), 300);
+    }
+  }
   const timer = document.querySelector('.seat.turn .timer');
   if (timer && S.turnEndsAt) timer.textContent = formatSeconds((S.turnEndsAt - Date.now()) / 1000);
   for (const away of document.querySelectorAll('[data-away-until]')) {
@@ -1053,6 +1239,13 @@ $('new-game').addEventListener('click', () => {
 
 $('leave').addEventListener('click', () => {
   confirmThen(t('confirm.leave'), t('manage.leave'), () => send({ type: 'leave' }));
+});
+
+$('close-table').addEventListener('click', () => {
+  const tb = S.state && S.state.table;
+  if (!tb) return;
+  confirmThen(t('confirm.close', { name: tableName(tb.id, tb.name) }), t('manage.close'),
+              () => send({ type: 'close_table' }), true);
 });
 
 // Clicking the dimmed page around a dialog closes it.

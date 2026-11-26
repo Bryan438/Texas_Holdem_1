@@ -77,6 +77,10 @@ void lobby::on_message(int client, const std::string& line){
       send_error(client, "leave your table first", "at_table");
       return;
     }
+    if(type == "close_table"){
+      handle_close(client, at);
+      return;
+    }
     // Everything else is the table's business, a second join included (it says so).
     tables[at].game->on_message(client, line);
     sync(at);
@@ -254,21 +258,60 @@ void lobby::tick(){
   }
 }
 
-void lobby::close_table(int id){
+// The host is done with their table: everyone there goes back to the lobby.
+void lobby::handle_close(int client, int id){
   entry& e = tables[id];
-  if(base.log_events) printf("[lobby] table %d \"%s\" closed: nobody was at it\n", id, e.game->settings().table_name.c_str());
+  table& t = *e.game;
+  const player& p = t.seat(t.seat_of(client));
+  if(p.bot){
+    send_error(client, "bots cannot close a table", "bots_cannot");
+  }
+  else if(e.permanent){
+    send_error(client, "the main table stays open", "main_table");
+  }
+  else if(t.host_name() != p.name){
+    send_error(client, "only the host (" + t.host_name() + ") can close the table", "not_host");
+  }
+  else{
+    close_table(id, p.name, "by its host, " + p.name);
+  }
+}
+
+void lobby::close_table(int id, const std::string& by, const std::string& why){
+  entry& e = tables[id];
+  if(base.log_events){
+    printf("[lobby] table %d \"%s\" closed: %s\n", id, e.game->settings().table_name.c_str(), why.c_str());
+  }
   // Bots that joined over the network may still be sitting there.
   std::vector<int> seated;
   for(const auto& [client, at] : seated_at){
     if(at == id) seated.push_back(client);
   }
+  json left = {{"type", "left"}, {"reason", "closed"}};
+  if(!by.empty()){
+    left["by"] = by;
+  }
+  tables.erase(id);   // first, so the list each of them gets no longer has it
   for(int client : seated){
     seated_at.erase(client);
-    send(client, {{"type", "left"}, {"reason", "closed"}});
-    send(client, lobby_message());
+    send(client, left);
   }
-  tables.erase(id);
-  broadcast_lobby();
+  broadcast_lobby();  // to everyone in the lobby, those just sent back included
+}
+
+// The server's console: close a table, whoever is at it.
+bool lobby::close(int table_id, std::string& error){
+  auto it = tables.find(table_id);
+  if(it == tables.end()){
+    error = "there is no table " + std::to_string(table_id) + " (type tables to see them)";
+    return false;
+  }
+  if(it->second.permanent){
+    error = "the main table stays open";
+    return false;
+  }
+  close_table(table_id, "", "from the console");
+  return true;
 }
 
 // ---------------------------------------------------------------- the list
