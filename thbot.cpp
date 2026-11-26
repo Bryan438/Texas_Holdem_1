@@ -17,6 +17,7 @@
 #include <vector>
 #include "bot.h"
 #include "line_buffer.h"
+#include "opponent_stats.h"
 #include "rl_policy.h"
 
 struct bot_config{
@@ -106,7 +107,8 @@ static std::string describe(const bot_move& move, const json& state){
 
 // One connection, until it drops. Returns false if the server turned the bot
 // away (a name that is taken, a full table): trying again would not help.
-static bool play(const bot_config& cfg, int sock, std::string& token, std::mt19937& rng){
+// `reads`: what the bot has seen of the others, kept across reconnects.
+static bool play(const bot_config& cfg, int sock, std::string& token, std::mt19937& rng, opponent_tracker& reads){
   json join = {{"type", "join"}, {"name", cfg.name}, {"bot", true}};
   if(cfg.table > 0) join["table"] = cfg.table;
   if(!cfg.password.empty()) join["password"] = cfg.password;
@@ -165,6 +167,7 @@ static bool play(const bot_config& cfg, int sock, std::string& token, std::mt199
           if(my_turn(latest)) move_at = now_ms();
         }
         else if(type == "hand_summary"){
+          reads.add_hand(msg);
           for(const json& w : msg.value("winners", json::array())){
             say(cfg, "hand #" + std::to_string(msg.value("hand", 0)) + ": " + w.value("name", "?") +
                      " wins " + std::to_string(w.value("won", 0)));
@@ -202,7 +205,7 @@ static bool play(const bot_config& cfg, int sock, std::string& token, std::mt199
           play_safe = false;
         }
         else{
-          move = decide(latest, cfg.style, rng);
+          move = decide(latest, cfg.style, rng, nullptr, &reads);
         }
         answered = decision_key(latest);
         say(cfg, "hand #" + std::to_string(latest.value("hand", 0)) + " " + latest.value("stage", "") +
@@ -220,6 +223,7 @@ static bool play(const bot_config& cfg, int sock, std::string& token, std::mt199
 static void run_bot(bot_config cfg){
   std::mt19937 rng(cfg.seed ? cfg.seed : std::random_device{}());
   std::string token;
+  opponent_tracker reads;
   int failures = 0;
   while(true){
     std::string error;
@@ -234,7 +238,7 @@ static void run_bot(bot_config cfg){
       continue;
     }
     failures = 0;
-    bool keep_going = play(cfg, sock, token, rng);
+    bool keep_going = play(cfg, sock, token, rng, reads);
     close(sock);
     if(!keep_going) return;
     std::this_thread::sleep_for(std::chrono::seconds(2));

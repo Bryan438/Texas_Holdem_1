@@ -20,6 +20,13 @@ struct match_options{
   // the one in use), and a name instead of "<style>-<seat>".
   std::vector<const rl_model*> models;
   std::vector<std::string> names;
+  // RL seats see the others' statistics from earlier hands of the match
+  // (false: every opponent looks like a stranger, every hand).
+  bool track_opponents = true;
+  // From hand `switch_after` on (0: never), seat i plays styles_after[i]
+  // instead, under the same name: a player who changes style without warning.
+  int switch_after = 0;
+  std::vector<bot_style> styles_after;
 };
 
 struct match_seat{

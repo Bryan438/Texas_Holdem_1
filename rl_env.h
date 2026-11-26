@@ -22,6 +22,14 @@ struct rl_env_options{
   // Networks "rl" opponents play with: one is drawn for each such seat every
   // hand (self-play against earlier versions). Empty: the one in use.
   std::vector<std::shared_ptr<const rl_model>> pool;
+  // Hands the same opponents stay for, so that their statistics mean
+  // something (1: new opponents every hand). Each session lasts between half
+  // and one and a half times this, and starts with nothing known about anyone.
+  int session_hands = 1;
+  // Chance (in percent) that halfway through a session the opponents change
+  // style without warning, while what was learned about them stays: the
+  // learner has to notice from the statistics that they now play differently.
+  int switch_percent = 0;
 };
 
 struct rl_step{
@@ -54,12 +62,16 @@ class rl_env{
     std::vector<bot_style> styles;   // who plays each seat this hand (seat 0: unused)
     std::vector<const rl_model*> models;   // and with which network, for "rl" seats
     int total_weight = 0;
+    opponent_tracker reads;          // what everyone has seen of the others this session
+    int session_left = 0;            // hands to go with these opponents
+    int switch_at = -1;              // session_left at which they change style (-1: they do not)
     bot_view view;
     rl_observation seen;
     bool hand_running = false;
     bool learner_chose = false;      // in the current hand
 
     void start_hand();
+    void draw_opponents();
     void play(int seat, const bot_move& move, bool can_check);
     void play_to_learner(rl_step& result);
 };

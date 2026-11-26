@@ -29,7 +29,7 @@ bot_move rl_move(const bot_view& v, int action){
   }
 }
 
-rl_observation rl_observe(const bot_view& v, std::mt19937& rng){
+rl_observation rl_observe(const bot_view& v, std::mt19937& rng, const opponent_tracker* tracker){
   rl_observation seen;
   seen.features.fill(0);
   int half = raise_target(v, RL_RAISE_HALF), pot = raise_target(v, RL_RAISE_POT);
@@ -116,6 +116,27 @@ rl_observation rl_observe(const bot_view& v, std::mt19937& rng){
   }
   add(paired);
   add(three_of_a_suit);
+  // n == RL_BASE_FEATURES. Then the opponents, from earlier hands.
+  opponent_tracker nobody_known;
+  const opponent_tracker& known = tracker ? *tracker : nobody_known;
+  size_t main = 0;
+  for(size_t i = 1; i < v.in_hand.size(); i++){
+    const opponent_view &o = v.in_hand[i], &m = v.in_hand[main];
+    if(o.bet > m.bet || (o.bet == m.bet && o.total_bet > m.total_bet)) main = i;
+  }
+  float main_read[OPPONENT_FEATURES], others[OPPONENT_FEATURES] = {0};
+  known.describe(v.in_hand.empty() ? "" : v.in_hand[main].name, main_read);
+  int rest = 0;
+  for(size_t i = 0; i < v.in_hand.size(); i++){
+    if(i == main) continue;
+    float read[OPPONENT_FEATURES];
+    known.describe(v.in_hand[i].name, read);
+    for(int f = 0; f < OPPONENT_FEATURES; f++) others[f] += read[f];
+    rest++;
+  }
+  if(rest == 0) known.describe("", others);   // nobody else: an unknown, average player
+  for(int f = 0; f < OPPONENT_FEATURES; f++) add(main_read[f]);
+  for(int f = 0; f < OPPONENT_FEATURES; f++) add(rest ? others[f] / rest : others[f]);
   // n == RL_FEATURES: tests/test_rl.cpp checks that the last feature is used.
   return seen;
 }
@@ -134,10 +155,11 @@ bool rl_model::parse(const std::string& text, std::string& error){
     error = "the model's first line is damaged";
     return false;
   }
-  if(features != RL_FEATURES || actions != RL_ACTIONS){
+  if((features != RL_FEATURES && features != RL_BASE_FEATURES) || actions != RL_ACTIONS){
     error = "the model was trained for " + std::to_string(features) + " inputs and " +
             std::to_string(actions) + " actions, this program uses " + std::to_string(RL_FEATURES) +
-            " and " + std::to_string(RL_ACTIONS) + ": train it again";
+            " (or " + std::to_string(RL_BASE_FEATURES) + ") and " + std::to_string(RL_ACTIONS) +
+            ": train it again";
     return false;
   }
   std::vector<layer> read;
@@ -191,7 +213,8 @@ bool rl_model::load_file(const std::string& path, std::string& error){
 }
 
 std::array<float, RL_ACTIONS> rl_model::scores(const std::array<float, RL_FEATURES>& features) const{
-  std::vector<float> values(features.begin(), features.end()), next;
+  // A model from before the opponent stats reads only the first RL_BASE_FEATURES.
+  std::vector<float> values(features.begin(), features.begin() + inputs()), next;
   for(size_t i = 0; i < layers.size(); i++){
     const layer& l = layers[i];
     next.assign(l.outputs, 0);

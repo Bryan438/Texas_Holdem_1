@@ -14,7 +14,14 @@
 // The same code turns a spot into numbers while training (thenv) and while
 // playing (thbot, thmatch), so the network always sees what it learned from.
 
-const int RL_FEATURES = 37;   // numbers describing the spot (see rl_observe)
+#include "opponent_stats.h"
+
+// Numbers describing the spot (see rl_observe): 37 about the cards, the chips
+// and the position, then 5 about the main opponent and 5 about the others
+// (see opponent_tracker). A model trained before the last 10 existed reads
+// only the first 37 and plays as it always did.
+const int RL_BASE_FEATURES = 37;
+const int RL_FEATURES = RL_BASE_FEATURES + 2 * OPPONENT_FEATURES;
 const int RL_ACTIONS = 5;
 
 enum rl_action{
@@ -31,7 +38,10 @@ struct rl_observation{
 };
 
 // The spot as the network sees it. Uses rng to simulate deals for the equity.
-rl_observation rl_observe(const bot_view& v, std::mt19937& rng);
+// `tracker`: what is known about the others from earlier hands (null: nothing).
+// The main opponent is the one who has put the most in this round (then this
+// hand), the first in turn order on a tie; "the others" are the average of the rest.
+rl_observation rl_observe(const bot_view& v, std::mt19937& rng, const opponent_tracker* tracker = nullptr);
 
 // The table move for one of the network's choices; always a legal move.
 bot_move rl_move(const bot_view& v, int action);
@@ -40,11 +50,12 @@ bot_move rl_move(const bot_view& v, int action);
 class rl_model{
   public:
     // Text format written by rl/train.py:
-    //   thrl 1 features 37 actions 5 layers 3
+    //   thrl 1 features 47 actions 5 layers 3   (or 37: a model from before the opponent stats)
     //   layer <inputs> <outputs>, then outputs x inputs weights, then outputs biases
     bool parse(const std::string& text, std::string& error);
     bool load_file(const std::string& path, std::string& error);
     bool ready() const { return !layers.empty(); }
+    int inputs() const { return layers.empty() ? 0 : layers[0].inputs; }   // RL_BASE_FEATURES or RL_FEATURES
     // One score per action; a higher score is picked more often.
     std::array<float, RL_ACTIONS> scores(const std::array<float, RL_FEATURES>& features) const;
 

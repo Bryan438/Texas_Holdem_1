@@ -35,6 +35,27 @@ void rl_env::start_hand(){
   for(int i = 0; i < options.players; i++){
     game->set_stack(i, options.chips);
   }
+  if(options.session_hands <= 1){
+    draw_opponents();      // new opponents every hand, and nothing to learn about them
+  }
+  else{
+    if(session_left <= 0){
+      reads.clear();
+      draw_opponents();
+      session_left = options.session_hands / 2 + (int)(rng() % (options.session_hands + 1));
+      switch_at = (int)(rng() % 100) < options.switch_percent ? session_left / 2 : -1;
+    }
+    else if(session_left == switch_at){
+      draw_opponents();
+    }
+    session_left--;
+  }
+  learner_chose = false;
+  hand_running = true;
+  game->on_message(client_of(0), R"({"type":"start"})");
+}
+
+void rl_env::draw_opponents(){
   for(int i = 1; i < options.players; i++){
     int roll = rng() % total_weight;
     for(const auto& choice : options.opponents){
@@ -49,9 +70,6 @@ void rl_env::start_hand(){
       models[i] = options.pool[rng() % options.pool.size()].get();
     }
   }
-  learner_chose = false;
-  hand_running = true;
-  game->on_message(client_of(0), R"({"type":"start"})");
 }
 
 void rl_env::play(int seat, const bot_move& move, bool can_check){
@@ -80,6 +98,7 @@ void rl_env::play_to_learner(rl_step& result){
           result.other_net += net;
         }
         hand_running = false;
+        if(options.session_hands > 1) reads.add_hand(game->last_hand());
       }
       start_hand();
       if(game->get_stage() == WAITING) return;   // the table refused to start: give up
@@ -89,10 +108,10 @@ void rl_env::play_to_learner(rl_step& result){
     json state = json::parse(out.last_state[client_of(seat)]);
     if(seat == 0){
       view = read_bot_view(state);
-      seen = rl_observe(view, rng);
+      seen = rl_observe(view, rng, &reads);
       return;
     }
-    bot_move move = decide(state, styles[seat], rng, models[seat]);
+    bot_move move = decide(state, styles[seat], rng, models[seat], &reads);
     play(seat, move, state["actions"].value("check", false));
   }
 }

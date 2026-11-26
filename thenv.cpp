@@ -30,6 +30,10 @@ static void usage(const char* program){
           "  --model FILE      the network that \"rl\" opponents use\n"
           "  --pool F1,F2,...  networks for \"rl\" opponents: one is drawn per seat\n"
           "                    every hand (training against earlier versions)\n"
+          "  --session N       hands the same opponents stay for, so the learner can\n"
+          "                    learn their habits (default 1: new ones every hand)\n"
+          "  --switch P        percent of sessions in which the opponents change style\n"
+          "                    halfway (default 0)\n"
           "  --chips N         chips every seat starts every hand with (default 200)\n"
           "  --seed N          same seed, same cards (default 1)\n",
           program, bot_style_list());
@@ -58,6 +62,8 @@ int main(int argc, char* argv[]){
     std::string value = argv[++i];
     if(arg == "--envs") count = atoi(value.c_str());
     else if(arg == "--chips") options.chips = atoi(value.c_str());
+    else if(arg == "--session") options.session_hands = atoi(value.c_str());
+    else if(arg == "--switch") options.switch_percent = atoi(value.c_str());
     else if(arg == "--seed") options.seed = (unsigned)strtoul(value.c_str(), nullptr, 10);
     else if(arg == "--players"){
       players.clear();

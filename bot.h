@@ -9,7 +9,8 @@
 
 using json = nlohmann::json;
 
-class rl_model;   // rl_policy.h
+class rl_model;            // rl_policy.h
+class opponent_tracker;    // opponent_stats.h
 
 // How a bot plays. A bot decides only from the "state" message the server
 // sends to its seat, so it sees exactly what a person in that seat would see.
@@ -36,10 +37,21 @@ struct bot_move{
 // that seat's turn; the move is always one of the allowed actions.
 // `model` is the network an RL bot plays with (null: the one in use, see
 // rl_current_model), so that different versions can sit at one table.
-bot_move decide(const json& state, bot_style style, std::mt19937& rng, const rl_model* model = nullptr);
+// `opponents` is what this bot has learned about the others from earlier
+// hands (null: nothing; every opponent looks like an average player). Only
+// the RL style reads it.
+bot_move decide(const json& state, bot_style style, std::mt19937& rng, const rl_model* model = nullptr,
+                const opponent_tracker* opponents = nullptr);
 
 // ---------------------------------------------------------------- building blocks
 // Exposed for the tests and for the learned bot.
+
+// An opponent still in the hand.
+struct opponent_view{
+  std::string name;
+  int bet = 0;             // put in this round
+  int total_bet = 0;       // and this hand
+};
 
 // The parts of a state message a bot decides from.
 struct bot_view{
@@ -59,6 +71,7 @@ struct bot_view{
   int total_bet = 0;       // and this hand
   bool on_button = false, small_blind = false, is_big_blind = false;
   std::vector<Card> hole, board;
+  std::vector<opponent_view> in_hand;   // the opponents still in, in turn order after us
 };
 
 bot_view read_bot_view(const json& state);

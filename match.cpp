@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <cmath>
 #include "match.h"
+#include "opponent_stats.h"
 #include "table.h"
 
 static int client_of(int seat){ return 1000 + seat; }
@@ -29,7 +30,14 @@ match_result run_match(const std::vector<bot_style>& styles, const match_options
   }
 
   std::mt19937 rng(options.seed * 2654435761u + 1);
+  // What the bots have seen of each other. They all saw the same actions, so
+  // one record serves every seat.
+  opponent_tracker reads;
+  std::vector<bot_style> playing = styles;
   for(int hand = 0; hand < options.hands; hand++){
+    if(options.switch_after > 0 && hand == options.switch_after){
+      for(size_t i = 0; i < playing.size() && i < options.styles_after.size(); i++) playing[i] = options.styles_after[i];
+    }
     for(size_t i = 0; i < styles.size(); i++){
       t.set_stack(i, options.chips);
     }
@@ -37,7 +45,8 @@ match_result run_match(const std::vector<bot_style>& styles, const match_options
     for(int guard = 0; guard < 1000 && t.get_stage() != WAITING; guard++){
       int s = t.get_turn();
       json state = json::parse(out.last_state[client_of(s)]);
-      bot_move move = decide(state, styles[s], rng, s < (int)options.models.size() ? options.models[s] : nullptr);
+      bot_move move = decide(state, playing[s], rng, s < (int)options.models.size() ? options.models[s] : nullptr,
+                             options.track_opponents ? &reads : nullptr);
       int errors_before = out.errors;
       t.on_message(client_of(s), move.to_message().dump());
       if(out.errors != errors_before){
@@ -51,6 +60,7 @@ match_result run_match(const std::vector<bot_style>& styles, const match_options
       break;    // cannot happen unless the table is stuck
     }
     const json& record = t.last_hand();
+    reads.add_hand(record);
     for(const json& p : record["players"]){
       int net = p.value("net", 0);
       match_seat& seat = result.seats[p.value("seat", 0)];
