@@ -10,3 +10,4 @@ thenv
 rl/models/
 __pycache__/
 *.tmp
+.venv/

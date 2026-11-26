@@ -15,6 +15,13 @@ Run it from this folder, after `make` in the repository:
     python train.py --total-timesteps 500000     # a quick try
     ../thmatch --model models/rl.txt --hands 20000 rl equity
 
+Opponent statistics: with --session N the same opponents stay for about N
+hands, so the learner can read their habits (the last 10 numbers it sees, see
+opponent_stats.h); --switch P makes them change style halfway through P% of
+the sessions. --start-from accepts a network trained before those numbers
+existed (37 inputs): it is widened with zero weights for the new inputs, so it
+starts out playing exactly as before.
+
 Self-play: with --self-play, "rl" opponents play earlier versions of the
 learner itself. Every --snapshot-every updates the network is saved to
 --pool-dir, and the opponents are drawn from the latest --pool-size of those
@@ -67,6 +74,10 @@ class Args:
     """networks (.txt, comma separated) that always stay in the pool"""
     hidden: int = 64
     """neurons per hidden layer"""
+    session: int = 1
+    """hands the same opponents stay for, so their statistics mean something (1: new ones every hand)"""
+    switch: int = 0
+    """percent of sessions in which the opponents change style halfway"""
 
     # Algorithm specific arguments
     total_timesteps: int = 3000000
@@ -138,6 +149,21 @@ class Agent(nn.Module):
         return action, probs.log_prob(action), probs.entropy(), self.critic(x)
 
 
+def load_start(agent, path):
+    """Loads a checkpoint; one with fewer inputs gets zero weights for the new ones,
+    so it plays exactly as it did until training finds a use for them."""
+    saved = torch.load(path)
+    own = agent.state_dict()
+    for key, value in saved.items():
+        if key in own and value.dim() == 2 and value.shape[0] == own[key].shape[0] \
+                and value.shape[1] < own[key].shape[1]:
+            wider = torch.zeros_like(own[key])
+            wider[:, :value.shape[1]] = value
+            print(f"{key}: {value.shape[1]} inputs widened to {own[key].shape[1]}")
+            saved[key] = wider
+    agent.load_state_dict(saved)
+
+
 def model_text(agent, num_features, num_actions):
     """The actor in the text format rl_policy.h describes."""
     layers = [m for m in agent.actor if isinstance(m, nn.Linear)]
@@ -198,7 +224,7 @@ if __name__ == "__main__":
     def open_tables(round_number, pool_files):
         # A new seed each time, or the tables would deal the same cards again.
         return PokerVecEnv(args.num_envs, args.num_procs, args.seed * 1000 + round_number, args.opponents,
-                           args.players, args.opponent_model or None, pool_files)
+                           args.players, args.opponent_model or None, pool_files, args.session, args.switch)
 
     pool = Pool(args) if args.self_play else None
     if args.self_play and "rl" not in [part.split(":")[0] for part in args.opponents.split(",")]:
@@ -209,7 +235,7 @@ if __name__ == "__main__":
     num_features, num_actions = envs.num_features, envs.num_actions
     agent = Agent(num_features, num_actions, args.hidden).to(device)
     if args.start_from:
-        agent.load_state_dict(torch.load(args.start_from))
+        load_start(agent, args.start_from)
     if pool:
         pool.add(agent, num_features, num_actions)
         envs.close()
@@ -233,6 +259,7 @@ if __name__ == "__main__":
     next_done = torch.zeros(args.num_envs)
     recent = []   # (big blinds won, hands) of the last iterations, for a steadier score
     print(f"{num_iterations} updates of {batch_size} decisions, against {args.opponents}, {args.players} players"
+          + (f", sessions of about {args.session} hands ({args.switch}% switch style)" if args.session > 1 else "")
           + (f", self-play: a new version every {args.snapshot_every} updates" if pool else ""))
 
     for iteration in range(1, num_iterations + 1):

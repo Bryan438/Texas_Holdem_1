@@ -15,6 +15,7 @@
 #include "player.h"
 #include "card.h"
 #include "deck_of_card.h"
+#include "opponent_stats.h"
 
 using json = nlohmann::json;
 
@@ -167,6 +168,7 @@ class table: public observer{
     bool game_over = false;             // ended by a player: nothing is dealt until a new game
     int64_t bot_move_at = 0;            // when the house bot whose turn it is moves
     std::mt19937 bot_rng;               // the house bots' dice
+    opponent_tracker house_reads;       // what the house bots have seen of everyone (public actions only)
     std::vector<hand_result_entry> last_result;
     json record;                        // the hand being played (see hand history)
     json last_record;                   // the last finished hand

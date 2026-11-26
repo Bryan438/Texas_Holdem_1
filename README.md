@@ -273,8 +273,9 @@ Styles (`bot.cpp`):
     pass (rank counts and suit bit masks) instead of trying all 21 five-card hands. It is 13x
     faster and the tests check it gives the same score as `evaluate_best`.
 
-- `rl` - a small neural network that learned by playing the four styles above; nobody wrote
-  its rules. See [A bot that learns](#a-bot-that-learns).
+- `rl` - a small neural network that learned by playing the four styles above and itself;
+  nobody wrote its rules. It keeps statistics on each opponent and plays them differently.
+  See [A bot that learns](#a-bot-that-learns).
 
 ### How strong is each bot?
 `thmatch` seats bots on a real table in one process (no network) and plays many hands.
@@ -309,7 +310,8 @@ decisions against the other styles and was nudged towards the choices that won c
   against any hand and against a bettor's likely hands (the same simulation the equity bot
   uses), the price of calling, pot and stack sizes, position, its hole cards, what they make
   with the board, and the board's texture. Like every bot it only knows what a person in
-  its seat would know.
+  its seat would know. The built-in network also sees 10 numbers on what it has seen of
+  the main opponent and of the others in earlier hands ([below](#opponent-statistics)).
 - **What it can do**: fold, check or call, bet or raise half the pot, bet or raise the pot,
   or go all in. Moves that make no sense in a spot (folding when checking is free) are not
   offered.
@@ -318,8 +320,9 @@ decisions against the other styles and was nudged towards the choices that won c
 - **Training** (`rl/train.py`, adapted from [CleanRL](https://github.com/vwxyzjn/cleanrl)'s
   `ppo.py`, MIT): `thenv` runs real tables with the learner in seat 0 and the other styles
   in the rest, and talks to the Python trainer over a pipe. The reward is the big blinds won
-  when a hand ends. The built-in network took 6 million decisions in two runs (below),
-  about fifteen minutes on a laptop.
+  when a hand ends. The first network (mix2) took 6 million decisions in two runs (below),
+  about fifteen minutes on a laptop; the one built in now (os1) trained 12 million more
+  with opponent statistics, about 35 minutes (see [Opponent statistics](#opponent-statistics)).
 - **Playing**: the trained network is built into `thbot` and `thmatch`
   (`rl_model_data.cpp`); C++ runs it directly, so playing needs no Python.
 
@@ -338,7 +341,8 @@ cd .. && make
 (`--opponents equity:14,rules:4,calling:1,random:1`), table sizes (`--players 2,2,3,6`),
 and the PPO settings.
 
-Heads-up results of the built-in network (bb/100, 95% confidence interval):
+Heads-up results of the first network, mix2 (bb/100, 95% confidence interval; the one built
+in now is compared with it [below](#opponent-statistics)):
 
 | Match | Hands | bb/100 for rl |
 |---|---|---|
@@ -356,8 +360,8 @@ it plays 80% of hands and raises 65% before the flop), and `calling` never folds
 all its chips in with good hands. The mix of opponents matters: trained on a mix with many
 weak opponents it crushed them but only broke even with `equity` (-8 ± 19); trained on
 `equity` alone it lost to `calling`. It has not been measured against people, it does not
-remember how an opponent played earlier hands, and a player who sees through its betting
-could beat it.
+remember how an opponent played earlier hands (os1 does), and a player who sees through its
+betting could beat it.
 
 #### Self-play, and how exploitable a network is
 
@@ -406,9 +410,78 @@ so the built-in one was left as it was:
 
 A network that does not know who it is playing has to pick one way to play against
 everyone, and these opponents want opposite things (call the maniac down, fold to the
-tight player). The likely way out is to let it see each opponent's statistics (how often
-they put money in and raise), so it can tell them apart. Until then the built-in network,
-which beats every fixed bot by the most, stays.
+tight player).
+
+#### Opponent statistics
+
+So the network now also sees what it has learned about the others in earlier hands
+(`opponent_stats.cpp`). Every bot keeps, per player name, from the actions everyone saw
+(never hole cards; blinds and timeouts do not count):
+
+- VPIP (puts money in preflop by choice) and PFR (raises preflop);
+- aggression: bets and raises after the flop, out of bets, raises and calls;
+- fold to a bet: how often they fold after the flop when someone bet before them;
+- how much has been seen of them (0 for a stranger, 0.5 after 20 hands).
+
+With few hands seen the rates stay near an average player's; older hands count less (each
+new hand multiplies the old ones by 0.99), so a player who changes style is noticed. The
+network gets these five for the main opponent (the one who put the most in this round)
+and the average of the rest: 47 numbers instead of 37. A model with 37 inputs still loads
+and plays as before. House bots, `thbot`, `thmatch` and the training tables all keep them.
+
+Training tables keep the same opponents for a *session* of 100 to 300 hands (`--session`),
+starting with nothing known; in a quarter of the sessions they change style halfway without
+warning (`--switch`). `--start-from` widens a 37-input network with zero weights for the
+new inputs, so it starts out playing exactly as before (checked: hand for hand the same).
+
+```bash
+cd rl
+.venv/bin/python train.py --self-play --start-from models/mix2.pt \
+    --pool-anchor models/mix2.txt,models/exploit-mix2.txt,models/exploit-sp.txt,models/exploit-mix2.txt,models/exploit-sp.txt \
+    --pool-dir models/pool-os1 --opponents equity:4,rules:2,calling:1,random:1,rl:6 --players 2,2,2,2,2,3,4,6 \
+    --session 200 --switch 25 --total-timesteps 12000000 --learning-rate 2e-4 --out models/os1
+cd .. && ./thmatch --hands 30000 rl=rl/models/os1.txt equity
+./thmatch --hands 4000 --switch 2000 --model rl/models/exploit-mix2.txt rl=rl/models/os1.txt rules/rl
+```
+The last line tests a change of style: seat 2 plays `rules` for 2000 hands, then the "rl"
+style, here the exploiter of mix2 (a maniac), under the same name; `thmatch` scores the
+hands after the switch on their own. `--no-reads` plays without the statistics.
+
+The result, os1, is better than mix2 on every count we measured but one, so it is now the
+built-in network (heads-up, bb/100, 95% interval):
+
+| Heads-up, bb/100 | os1 (built in) | os1, statistics off | mix2 |
+|---|---|---|---|
+| vs mix2, 50,000 hands | +58.4 ± 14.0 | +65.6 ± 15.6 | |
+| vs lg1, 50,000 hands | +99.7 ± 29.5 | | +64.3 ± 21.1 |
+| vs equity, 30,000 hands | +40.9 ± 10.2 | +7.8 ± 12.8 | +46.2 ± 10.6 |
+| vs rules, 30,000 hands | +46.0 ± 8.6 | +20.2 ± 11.3 | +44.1 ± 7.1 |
+| vs calling, 10,000 hands | +2372.0 ± 129.1 | | +2293.9 ± 123.8 |
+| vs random, 10,000 hands | +662.3 ± 62.0 | | +784.3 ± 74.6 |
+| vs the exploiter of mix2, 20,000 hands | +1723.4 ± 69.3 | +517.0 ± 67.6 | -628 ± 20 |
+| vs the exploiter of sp, 20,000 hands | +2690.2 ± 83.0 | | -347.1 ± 43.5 |
+| what its own exploiter wins from it, 50,000 hands | 112 ± 23 | | 628 ± 20 |
+| `rules`, then the mix2 exploiter: hands 2001-4000 | +1674.4 ± 214.3 | | -576.9 ± 87.2 |
+| the mix2 exploiter, then `rules`: hands 2001-4000 | +23.1 ± 38.8 | | +47.0 ± 28.1 |
+
+Four players (os1, equity, rules, calling; 10,000 hands): os1 +2089, equity +325,
+rules +181, calling -2595.
+
+- The statistics do the work: switched off, os1 wins far less from `equity`, `rules` and
+  the maniac. Against mix2, which plays everyone alike, they change nothing.
+- The maniacs that took 628 and 347 bb/100 from mix2 now lose 1700 to 2700 to os1, and a
+  fresh exploiter trained against os1 (`--opponents rl:1 --opponent-model models/os1.txt
+  --session 200`, 2 million decisions) wins 112, a sixth of what mix2's gives away. lg1 had
+  got its exploiter down to 271 too, but it paid for that by losing to `equity` and `rules`;
+  os1 keeps beating them.
+- When a tight player turns into a maniac, os1 notices almost at once. The other way round
+  it is slower (+23 against +46 from the start): it takes about a hundred hands for its
+  memory of the maniac to fade.
+- Against `random` it wins less than mix2. `equity` is a draw within the interval.
+
+What is still not known: how it does against people, and against a player who plays tight
+for a hundred hands on purpose and then bluffs. The exploiters here are fixed networks that
+cannot plan over many hands.
 
 ## Test
 ```bash
@@ -467,6 +540,9 @@ Tests have no external dependencies (`tests/test_framework.h`). They cover:
   turned into a legal move, model files read and bad ones refused with a reason, training
   tables that play legal hands and repeat with the same seed, and the built-in network
   beating the baselines
+- opponent statistics: a maniac told from a rock, blinds and timeouts not counted, a change
+  of style noticed, the main opponent picked from the state, 37-input models still playing,
+  training sessions that keep their opponents, and a match seat that switches style
 - equity: known all-in odds (AA 85%, 72o 35%), split pots and kickers, the nuts, opponent
   ranges, the preflop table, and `evaluate_fast` agreeing with `evaluate_best` on 100,000
   random hands

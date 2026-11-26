@@ -65,8 +65,8 @@ TEST(rl_features_describe_the_spot){
   seen = rl_observe(spot({"Ah", "Kh"}, {"9h", "4h", "2h", "9c", "Td"}, 20, 0, 0, 2, 190), rng);
   CHECK(seen.features[3] == 1 && seen.features[0] == 0);        // river
   CHECK(seen.features[33] == 1);                                // a monster
-  CHECK(seen.features[RL_FEATURES - 2] == 1);                   // paired board
-  CHECK(seen.features[RL_FEATURES - 1] == 1);                   // three of a suit: the last feature is filled
+  CHECK(seen.features[RL_BASE_FEATURES - 2] == 1);              // paired board
+  CHECK(seen.features[RL_BASE_FEATURES - 1] == 1);              // three of a suit
   for(float f : seen.features){
     CHECK(std::isfinite(f) && f >= -0.1 && f <= 1.0);
   }
@@ -138,7 +138,7 @@ TEST(rl_model_refuses_bad_files){
   std::string error;
   CHECK(!model.parse("", error));
   CHECK(!model.parse("hello world", error));
-  CHECK(!model.parse("thrl 2 features 37 actions 5 layers 1", error));
+  CHECK(!model.parse("thrl 2 features 47 actions 5 layers 1", error));
   // Trained for another number of inputs: say so instead of playing nonsense.
   CHECK(!model.parse("thrl 1 features 12 actions 5 layers 1\nlayer 12 5\n", error));
   CHECK(error.find("train it again") != std::string::npos);
@@ -275,4 +275,196 @@ TEST(rl_seats_can_play_different_networks){
   CHECK_EQ(env.illegal_moves(), 0);
   CHECK(learner_folds > 20);                     // met the shover
   CHECK(env.hands_played() > 150);               // and hands went on: not every one was a shove
+}
+
+// ---------------------------------------------------------------- what the bot learns about the others
+
+// A finished hand as the table records it: who was dealt in, then the actions.
+static json hand_of(std::vector<std::string> names, std::vector<std::vector<std::string>> actions){
+  json hand = {{"players", json::array()}, {"actions", json::array()}};
+  for(size_t i = 0; i < names.size(); i++) hand["players"].push_back({{"seat", (int)i}, {"name", names[i]}});
+  for(const auto& a : actions){   // street, name, action[, reason]
+    json action = {{"street", a[0]}, {"name", a[1]}, {"action", a[2]}, {"amount", 0}};
+    if(a.size() > 3) action["reason"] = a[3];
+    hand["actions"].push_back(action);
+  }
+  return hand;
+}
+
+TEST(opponent_tracker_tells_a_maniac_from_a_rock){
+  opponent_tracker reads(1.0);
+  float stranger[OPPONENT_FEATURES], maniac[OPPONENT_FEATURES], rock[OPPONENT_FEATURES];
+  reads.describe("Max", stranger);
+  CHECK(stranger[4] == 0);                                   // nothing seen yet
+  CHECK(stranger[0] > 0.3 && stranger[0] < 0.5);             // an average player
+  for(int i = 0; i < 40; i++){
+    reads.add_hand(hand_of({"Max", "Rocky"}, {
+      {"preflop", "Max", "small_blind"}, {"preflop", "Rocky", "big_blind"},
+      {"preflop", "Max", "raise"}, {"preflop", "Rocky", "call"},
+      {"flop", "Rocky", "check"}, {"flop", "Max", "bet"}, {"flop", "Rocky", "fold"}}));
+  }
+  reads.describe("Max", maniac);
+  reads.describe("Rocky", rock);
+  CHECK(maniac[0] > 0.85 && maniac[1] > 0.85 && maniac[2] > 0.85);   // in, raising, betting
+  CHECK(rock[1] < 0.1 && rock[3] > 0.85);                             // never raises, folds to a bet
+  CHECK(maniac[4] > 0.6 && maniac[4] < 1);
+  CHECK_EQ((int)reads.hands_seen("Rocky"), 40);
+  for(int f = 0; f < OPPONENT_FEATURES; f++) CHECK(maniac[f] >= 0 && maniac[f] <= 1);
+
+  // A few hands say little: the rates stay near the average.
+  opponent_tracker few;
+  few.add_hand(hand_of({"Max", "Rocky"}, {{"preflop", "Max", "raise"}, {"preflop", "Rocky", "fold"}}));
+  few.describe("Max", maniac);
+  CHECK(maniac[1] > stranger[1] && maniac[1] < 0.5);
+}
+
+TEST(opponent_tracker_counts_only_choices){
+  opponent_tracker reads(1.0);
+  for(int i = 0; i < 30; i++){
+    // Blinds are forced, a timeout was nobody's choice, a check is not a call.
+    reads.add_hand(hand_of({"A", "B"}, {
+      {"preflop", "A", "small_blind"}, {"preflop", "B", "big_blind"},
+      {"preflop", "A", "fold", "timeout"}}));
+  }
+  float a[OPPONENT_FEATURES];
+  reads.describe("A", a);
+  CHECK(a[0] < 0.15 && a[1] < 0.15);
+  CHECK(std::fabs(a[3] - 0.40f) < 1e-5);            // never bet into after the flop: still the average
+  // Someone who was not dealt in is not counted, nor is a damaged hand.
+  reads.add_hand(json::parse(R"({"players":"nonsense"})"));
+  reads.add_hand(hand_of({"A"}, {{"preflop", "Ghost", "raise"}}));
+  CHECK_EQ(reads.hands_seen("Ghost"), 0.0);
+}
+
+TEST(opponent_tracker_notices_a_change_of_style){
+  opponent_tracker reads;   // the default memory forgets slowly
+  json tight = hand_of({"P", "Q"}, {{"preflop", "P", "fold"}});
+  json loose = hand_of({"P", "Q"}, {{"preflop", "P", "raise"}, {"preflop", "Q", "fold"}});
+  for(int i = 0; i < 300; i++) reads.add_hand(tight);
+  for(int i = 0; i < 150; i++) reads.add_hand(loose);
+  float p[OPPONENT_FEATURES];
+  reads.describe("P", p);
+  CHECK(p[1] > 0.7);        // 150 hands of raising outweigh 300 older folds
+  CHECK(reads.hands_seen("P") < 101);
+}
+
+TEST(rl_features_include_the_main_opponent){
+  opponent_tracker reads(1.0);
+  for(int i = 0; i < 60; i++){
+    reads.add_hand(hand_of({"me", "Max", "Rocky"}, {{"preflop", "Max", "raise"}, {"preflop", "Rocky", "fold"},
+                                                    {"preflop", "me", "fold"}}));
+  }
+  std::mt19937 rng(1);
+  bot_view v = spot({"Qs", "Jd"}, {"Kh", "9c", "2d"}, 40, 10, 10, 20, 190);
+  v.opponents = 2;
+  opponent_view rocky, max;
+  rocky.name = "Rocky";
+  max.name = "Max";
+  max.bet = 10;                           // Max bet: he is the one to read
+  v.in_hand = {rocky, max};
+  rl_observation seen = rl_observe(v, rng, &reads);
+  const int M = RL_BASE_FEATURES, O = RL_BASE_FEATURES + OPPONENT_FEATURES;
+  CHECK(seen.features[M + 1] > 0.85);                     // Max raises
+  CHECK(seen.features[O + 1] < 0.1);                      // Rocky, the other, does not
+  CHECK(seen.features[RL_FEATURES - 1] > 0.6);            // and he has been seen: the last feature is filled
+  for(float f : seen.features) CHECK(std::isfinite(f) && f >= -0.1 && f <= 1.0);
+
+  // Knowing nothing, both look like an average stranger.
+  rl_observation blind = rl_observe(v, rng);
+  CHECK(blind.features[M + 4] == 0 && blind.features[O + 4] == 0);
+  CHECK(std::fabs(blind.features[M] - 0.40f) < 1e-5 && std::fabs(blind.features[O] - 0.40f) < 1e-5);
+  for(int f = 0; f < RL_BASE_FEATURES; f++){
+    if(f != 4 && f != 5 && f != 6) CHECK(blind.features[f] == seen.features[f]);   // the rest is unchanged
+  }
+}
+
+TEST(rl_reads_the_other_seats_from_the_state){
+  json st = {{"type", "state"}, {"you", 1}, {"stage", "flop"}, {"pot", 40}, {"current_bet", 10},
+             {"blinds", {1, 2}}, {"board", {"Kh", "9c", "2d"}}, {"dealer", 0},
+             {"seats", {{{"seat", 0}, {"name", "A"}, {"stack", 190}, {"bet", 10}, {"total_bet", 20}, {"status", "active"}},
+                        {{"seat", 1}, {"name", "me"}, {"stack", 190}, {"bet", 0}, {"total_bet", 10}, {"status", "active"},
+                         {"cards", {"7d", "2c"}}},
+                        {{"seat", 2}, {"name", "B"}, {"stack", 190}, {"bet", 0}, {"total_bet", 10}, {"status", "folded"}},
+                        {{"seat", 3}, {"name", "C"}, {"stack", 0}, {"bet", 0}, {"total_bet", 200}, {"status", "allin"}}}},
+             {"actions", {{"fold", true}, {"check", false}, {"call", 10}, {"raise", {{"min", 20}, {"max", 190}}}}}};
+  bot_view v = read_bot_view(st);
+  CHECK_EQ((int)v.in_hand.size(), 2);                     // the folded seat is out
+  CHECK(v.in_hand[0].name == "C" && v.in_hand[1].name == "A");   // turn order after us
+  CHECK(v.in_hand[1].bet == 10 && v.in_hand[0].total_bet == 200);
+}
+
+TEST(rl_old_models_with_37_inputs_still_play){
+  std::string text = "thrl 1 features " + std::to_string(RL_BASE_FEATURES) + " actions 5 layers 1\nlayer " +
+                     std::to_string(RL_BASE_FEATURES) + " 5\n";
+  for(int a = 0; a < RL_ACTIONS; a++){
+    for(int f = 0; f < RL_BASE_FEATURES; f++) text += f == 4 && a == 1 ? "10 " : "0 ";
+    text += "\n";
+  }
+  text += "1 2 3 4 5\n";
+  rl_model model;
+  std::string error;
+  CHECK(model.parse(text, error));
+  CHECK_EQ(model.inputs(), RL_BASE_FEATURES);
+  std::array<float, RL_FEATURES> features;
+  features.fill(1);                                       // the opponent numbers are ignored
+  features[4] = 0.5f;
+  std::array<float, RL_ACTIONS> scores = model.scores(features);
+  CHECK(std::fabs(scores[1] - 7) < 1e-5 && std::fabs(scores[4] - 5) < 1e-5);
+  // The built-in network keeps playing whatever its size.
+  if(rl_current_model()) CHECK(rl_current_model()->inputs() == RL_BASE_FEATURES || rl_current_model()->inputs() == RL_FEATURES);
+}
+
+TEST(rl_env_sessions_keep_the_opponents_and_learn_them){
+  rl_env_options options;
+  options.seed = 5;
+  options.session_hands = 200;
+  options.opponents = {{bot_style::CALLING, 1}};
+  rl_env env(options);
+  std::mt19937 rng(2);
+  const int M = RL_BASE_FEATURES;
+  float last_seen = 0, aggression = 1;
+  for(int i = 0; i < 300; i++){
+    const rl_observation& seen = env.observation();
+    last_seen = seen.features[M + 4];
+    aggression = seen.features[M + 2];
+    env.step(seen.allowed[RL_RAISE_HALF] && rng() % 2 ? RL_RAISE_HALF : RL_CALL);
+  }
+  CHECK_EQ(env.illegal_moves(), 0);
+  CHECK(last_seen > 0.3);                                 // the caller has been watched for a while
+  CHECK(aggression < 0.2);                                // and never bets
+
+  // Sessions that switch style still play legal hands and repeat with the seed.
+  options.opponents = {{bot_style::CALLING, 1}, {bot_style::RULES, 1}, {bot_style::RANDOM, 1}};
+  options.players = 3;
+  options.session_hands = 20;
+  options.switch_percent = 100;
+  std::vector<float> runs[2];
+  for(int run = 0; run < 2; run++){
+    rl_env again(options);
+    for(int i = 0; i < 400; i++){
+      rl_step step = again.step(i % RL_ACTIONS);
+      runs[run].push_back(step.reward + step.other_net + again.observation().features[M + 4]);
+    }
+    CHECK_EQ(again.illegal_moves(), 0);
+  }
+  CHECK(runs[0] == runs[1]);
+}
+
+TEST(match_seat_can_change_style_without_warning){
+  match_options options;
+  options.hands = 300;
+  options.switch_after = 150;
+  options.styles_after = {bot_style::RULES, bot_style::CALLING};
+  match_result r = run_match({bot_style::RULES, bot_style::RANDOM}, options);
+  CHECK_EQ(r.illegal_moves, 0);
+  int raises_before = 0, raises_after = 0;
+  for(size_t h = 0; h < r.records.size(); h++){
+    for(const json& a : r.records[h]["actions"]){
+      bool raise = a["seat"] == 1 && (a["action"] == "raise" || a["action"] == "bet");
+      (h < 150 ? raises_before : raises_after) += raise;
+    }
+  }
+  CHECK(raises_before > 10);      // random raises now and then
+  CHECK_EQ(raises_after, 0);      // a calling station never does
+  CHECK(r.seats[1].name == "random-2");   // same name: nobody was told
 }

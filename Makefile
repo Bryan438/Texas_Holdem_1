@@ -3,7 +3,7 @@ CXXFLAGS = -std=c++17 -Wall -g -O2 -pthread
 
 # The game itself; the server adds the network (transport.cpp) on top.
 CORE = card.cpp deck_of_card.cpp player.cpp table.cpp hand_evaluator.cpp pot_calculator.cpp
-BOT = bot.cpp equity.cpp rl_policy.cpp rl_model_data.cpp
+BOT = bot.cpp equity.cpp rl_policy.cpp rl_model_data.cpp opponent_stats.cpp
 SRCS = $(CORE) lobby.cpp transport.cpp websocket.cpp
 OBJS = $(SRCS:.cpp=.o)
 HEADERS = $(wildcard *.h)
@@ -32,7 +32,7 @@ thenv: thenv.o rl_env.o $(BOT:.cpp=.o) $(CORE:.cpp=.o)
 
 # json.hpp is large: only these depend on it.
 JSON_OBJS = table.o lobby.o stats.o thstats.o bot.o match.o thbot.o thmatch.o \
-            rl_policy.o rl_model_data.o rl_env.o thenv.o
+            rl_policy.o rl_model_data.o rl_env.o thenv.o opponent_stats.o
 $(JSON_OBJS): %.o: %.cpp $(HEADERS) third_party/json.hpp
 	$(CXX) $(CXXFLAGS) -c $<
 

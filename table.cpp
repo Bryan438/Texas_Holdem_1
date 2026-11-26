@@ -413,7 +413,7 @@ void table::play_house_bot(int s){
   player& p = *seats[s];
   bot_style style = bot_style::RL;
   parse_bot_style(p.style, style);
-  bot_move move = decide(state_for(s), style, bot_rng);
+  bot_move move = decide(state_for(s), style, bot_rng, nullptr, &house_reads);
   std::string error;
   if(!apply_action(s, move.action, move.amount, error)){
     // Cannot happen (decide keeps to the allowed moves), but never stall the table.
@@ -1371,6 +1371,7 @@ void table::finish_hand(){
     pl["net"] = seats[seat]->stack - pl["stack"].get<int>();
   }
   last_record = record;
+  house_reads.add_hand(last_record);   // reads only the actions, which everyone saw
   save_record();
   for(size_t i = 0; i < seats.size(); i++){
     if(seats[i]->connected){

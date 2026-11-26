@@ -214,7 +214,8 @@ bot_view read_bot_view(const json& st){
   v.on_button = you >= 0 && st.value("dealer", -1) == you;
   v.small_blind = you >= 0 && st.value("small_blind", -1) == you;
   v.is_big_blind = you >= 0 && st.value("big_blind", -1) == you;
-  for(const json& s : st.value("seats", json::array())){
+  const json seats = st.value("seats", json::array());
+  for(const json& s : seats){
     std::string status = s.value("status", "");
     if(s.value("seat", -1) == you){
       v.stack = s.value("stack", 0);
@@ -232,6 +233,18 @@ bot_view read_bot_view(const json& st){
       v.opponents_all_in += status == "allin";
       v.opponent_stack = std::max(v.opponent_stack, s.value("stack", 0));
     }
+  }
+  // The same opponents in turn order, starting after us.
+  int n = (int)seats.size();
+  for(int k = 1; k < n; k++){
+    const json& s = seats[((you < 0 ? 0 : you) + k) % n];
+    std::string status = s.value("status", "");
+    if(s.value("seat", -1) == you || (status != "active" && status != "allin")) continue;
+    opponent_view o;
+    o.name = s.contains("name") && s["name"].is_string() ? s["name"].get<std::string>() : "";
+    o.bet = s.value("bet", 0);
+    o.total_bet = s.value("total_bet", 0);
+    v.in_hand.push_back(o);
   }
   for(const json& code : st.value("board", json::array())){
     Card c;
@@ -376,7 +389,8 @@ bot_move decide_equity(const bot_view& v, std::mt19937& rng){
 
 }  // namespace
 
-bot_move decide(const json& state, bot_style style, std::mt19937& rng, const rl_model* chosen){
+bot_move decide(const json& state, bot_style style, std::mt19937& rng, const rl_model* chosen,
+                const opponent_tracker* opponents){
   if(!state.contains("actions") || !state["actions"].is_object()){
     return {"check", 0};
   }
@@ -396,7 +410,7 @@ bot_move decide(const json& state, bot_style style, std::mt19937& rng, const rl_
     case bot_style::RL:{
       const rl_model* model = chosen ? chosen : rl_current_model();
       if(v.hole.size() != 2 || model == nullptr) return check_or_fold(v);
-      return rl_move(v, rl_choose(*model, rl_observe(v, rng), rng));
+      return rl_move(v, rl_choose(*model, rl_observe(v, rng, opponents), rng));
     }
   }
   return check_or_fold(v);

@@ -15,7 +15,7 @@ THENV = os.path.join(HERE, "..", "thenv")
 
 class PokerVecEnv:
     def __init__(self, num_envs, num_procs=8, seed=1, opponents="equity", players="2", model=None, pool=None,
-                 binary=THENV):
+                 session=1, switch=0, binary=THENV):
         if not os.path.exists(binary):
             raise SystemExit(f"{binary} not found: run `make` in the repository first")
         num_procs = max(1, min(num_procs, num_envs))
@@ -25,7 +25,8 @@ class PokerVecEnv:
         self.procs = []
         for i, size in enumerate(sizes):
             command = [binary, "--envs", str(size), "--seed", str(seed * 1000 + i + 1),
-                       "--opponents", opponents, "--players", players]
+                       "--opponents", opponents, "--players", players,
+                       "--session", str(session), "--switch", str(switch)]
             if model:
                 command += ["--model", model]
             if pool:   # networks the "rl" opponents are drawn from, one per seat and hand
