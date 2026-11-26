@@ -68,5 +68,5 @@ if [ -n "$DOMAIN" ]; then
 else
   echo "Done. Open http://$(curl -fsS https://api.ipify.org 2>/dev/null || echo SERVER_IP)"
 fi
-echo "Console: sudo thctl tables | players | kick NAME [TABLE]"
+echo "Console: sudo thctl tables | players | kick NAME [TABLE] | close TABLE"
 echo "Update later: sudo /opt/thserver/src/deploy/update.sh"

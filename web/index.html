@@ -16,6 +16,7 @@
       <button id="end-game" class="quiet" type="button"></button>
       <button id="new-game" class="quiet" type="button"></button>
       <button id="leave" class="quiet destructive" type="button"></button>
+      <button id="close-table" class="quiet destructive" type="button" hidden></button>
     </span>
     <span id="conn" class="conn" role="status"></span>
     <button id="lang" class="quiet" type="button"></button>
@@ -51,10 +52,22 @@
     </section>
     <aside class="side">
       <div class="side-head">
-        <h2 id="log-title"></h2>
+        <!-- What happened, or what people said -->
+        <div class="segmented side-tabs" role="tablist">
+          <button id="tab-log" class="on" type="button" role="tab" aria-selected="true" aria-controls="log"></button>
+          <button id="tab-chat" type="button" role="tab" aria-selected="false" aria-controls="chat"><span id="tab-chat-label"></span><span id="unread" class="unread" hidden></span></button>
+        </div>
         <button id="summary-button" class="quiet" type="button" hidden></button>
       </div>
-      <ol id="log" class="log"></ol>
+      <ol id="log" class="log" role="tabpanel"></ol>
+      <section id="chat" class="chat" role="tabpanel" hidden>
+        <ol id="chat-lines" class="chat-lines" aria-live="polite"></ol>
+        <div id="phrases" class="phrases"></div>
+        <form id="chat-form" class="chat-form" autocomplete="off">
+          <input id="chat-input" maxlength="200" enterkeyhint="send">
+          <button id="chat-send" class="send" type="submit">↑</button>
+        </form>
+      </section>
     </aside>
   </main>
 

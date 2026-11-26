@@ -24,6 +24,10 @@ struct lobby_limits{
 //       password optional (a private table). Answer: {"type":"table_created","table":3}
 //   {"type":"join","table":3,"name":"Ann","password":"...","token":"..."}
 //       without "table": the main table, so older clients and thbot still work
+//   {"type":"close_table"}   the host closes the table they sit at (not the main
+//       one): everyone there gets {"type":"left","reason":"closed","by":"Ann"}
+//       ("by" is left out when the server closed it)
+//       and is back in the lobby; a hand being played is dropped
 // Server -> client: {"type":"lobby","tables":[...],"max_tables":20,"can_create":true},
 // sent on connecting, on getting up from a table, and whenever the list changes.
 class lobby: public observer{
@@ -41,6 +45,7 @@ class lobby: public observer{
     std::string list() const;
     std::string roster() const;
     bool kick(const std::string& name, int table_id, std::string& error);
+    bool close(int table_id, std::string& error);
 
     // Tests.
     int table_count() const { return (int)tables.size(); }
@@ -69,7 +74,9 @@ class lobby: public observer{
 
     int open_table(const std::string& name, int small_blind, int big_blind, int chips,
                    const std::string& password, bool permanent);
-    void close_table(int id);
+    // by: the person who closed it ("" = the server); why: for the server's log.
+    void close_table(int id, const std::string& by = "", const std::string& why = "nobody was at it");
+    void handle_close(int client, int id);
     void handle_create(int client, const json& msg);
     void handle_join(int client, const json& msg);
     void sync(int id);

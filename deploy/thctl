@@ -5,7 +5,7 @@
 #   sudo thctl kick Ann 3
 set -e
 if [ $# -eq 0 ]; then
-  echo "Usage: thctl tables | players | kick NAME [TABLE] | help"
+  echo "Usage: thctl tables | players | kick NAME [TABLE] | close TABLE | help"
   exit 1
 fi
 PIPE=/run/thserver/console

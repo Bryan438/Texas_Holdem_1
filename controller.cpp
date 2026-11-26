@@ -52,6 +52,8 @@ static const char* console_help =
   "  players           who is seated at each table, with their chips\n"
   "  kick NAME [TABLE] remove someone from their table (folds their hand if one is\n"
   "                    running); TABLE only when the name is at more than one table\n"
+  "  close TABLE       close a table (not the main one): everyone there goes back\n"
+  "                    to the lobby\n"
   "  help        this list\n";
 
 // What the person running the server types. Runs until the input ends, so a
@@ -76,6 +78,18 @@ static void console_lines(transport* tp, lobby* game, std::istream& input){
       std::string text;
       tp->run_locked([&]{ text = game->list(); });
       printf("%s", text.c_str());
+    }
+    else if(word == "close"){
+      if(rest.empty() || rest.find_first_not_of("0123456789") != std::string::npos || rest.size() > 6){
+        printf("Usage: close TABLE (its number: type tables to see them)\n");
+        continue;
+      }
+      std::string error;
+      bool done = false;
+      tp->run_locked([&]{ done = game->close(std::stoi(rest), error); });
+      if(!done){
+        printf("%s\n", error.c_str());
+      }
     }
     else if(word == "kick"){
       if(rest.empty()){

@@ -114,6 +114,12 @@ void table::on_message(int client, const std::string& line){
   else if(type == "rebuy"){
     handle_rebuy(client);
   }
+  else if(type == "chat"){
+    handle_chat(client, msg);
+  }
+  else if(type == "mute"){
+    handle_mute(client, msg);
+  }
   else{
     send_error(client, "unknown message type: " + type, "bad_message");
   }
@@ -213,7 +219,7 @@ void table::handle_join(int client, const json& msg){
       seats[i]->socket = client;
       seats[i]->connected = true;
       seats[i]->away_until = 0;   // back in time: the hand goes on with their cards
-      send(client, {{"type", "welcome"}, {"seat", (int)i}, {"name", name}, {"token", token}});
+      welcome(client, (int)i, name, token);
       event(name + " reconnected", {{"kind", "reconnected"}, {"name", name}});
       broadcast_state();
       return;
@@ -247,7 +253,7 @@ void table::handle_join(int client, const json& msg){
     p.buy_in = back.buy_in;
     p.bot = back.bot;
     p.token = back.token;
-    send(client, {{"type", "welcome"}, {"seat", s}, {"name", name}, {"token", p.token}});
+    welcome(client, s, name, p.token);
     event(name + " is back with " + std::to_string(p.stack) + " chips" +
           (current_stage == WAITING ? "" : " (plays from the next hand)"),
           {{"kind", "returned"}, {"name", name}, {"amount", p.stack}, {"next_hand", current_stage != WAITING}});
@@ -268,7 +274,7 @@ void table::handle_join(int client, const json& msg){
   p.buy_in = config.starting_stack;
   p.bot = msg.contains("bot") && msg["bot"].is_boolean() && msg["bot"].get<bool>();
   p.token = make_token();
-  send(client, {{"type", "welcome"}, {"seat", s}, {"name", name}, {"token", p.token}});
+  welcome(client, s, name, p.token);
   event(name + " joined" + (current_stage == WAITING ? "" : " (plays from the next hand)"),
         {{"kind", "joined"}, {"name", name}, {"next_hand", current_stage != WAITING}});
   broadcast_state();
@@ -687,6 +693,133 @@ void table::handle_kick(int client, const json& msg){
     return;
   }
   remove_player(target, true, seats[s]->name);
+}
+
+// ---------------------------------------------------------------- chat
+
+// Quick phrases: an id every client words in its own language, and the
+// English words for those that just print the text.
+static const std::pair<const char*, const char*> CHAT_PHRASES[] = {
+  {"good_luck", "Good luck!"}, {"nice_hand", "Nice hand!"}, {"well_played", "Well played"},
+  {"thinking", "Let me think..."}, {"wow", "Wow!"}, {"gg", "GG"},
+};
+
+// Seated now: the seat, the name, the secret to come back with, and what has
+// been said here so far.
+void table::welcome(int client, int seat, const std::string& name, const std::string& token){
+  send(client, {{"type", "welcome"}, {"seat", seat}, {"name", name}, {"token", token}});
+  send(client, {{"type", "chat_history"}, {"messages", json(chat_log)}});
+}
+
+void table::handle_chat(int client, const json& msg){
+  const player& p = *seats[seat_of(client)];
+  if(p.bot){
+    send_error(client, "bots do not chat", "bots_cannot");
+    return;
+  }
+  if(muted.count(p.name)){
+    send_error(client, "the host has muted you: your messages do not reach the table", "muted");
+    return;
+  }
+  std::string text, phrase;
+  if(msg.contains("phrase")){
+    phrase = msg["phrase"].is_string() ? msg["phrase"].get<std::string>() : "";
+    for(const auto& [id, words] : CHAT_PHRASES){
+      if(phrase == id) text = words;
+    }
+    if(text.empty()){
+      send_error(client, "no such quick phrase", "bad_phrase");
+      return;
+    }
+  }
+  else{
+    text = msg.contains("text") && msg["text"].is_string() ? msg["text"].get<std::string>() : "";
+    // One line of words: control characters (new lines included) become spaces.
+    for(char& c : text){
+      if((unsigned char)c < 0x20 || c == 0x7f) c = ' ';
+    }
+    text.erase(0, text.find_first_not_of(' '));
+    text.erase(text.find_last_not_of(' ') + 1);
+    if(text.empty()){
+      send_error(client, "say something: the message is empty", "chat_empty");
+      return;
+    }
+    // Characters, not bytes: Chinese takes three bytes a character.
+    int chars = std::count_if(text.begin(), text.end(), [](char c){ return ((unsigned char)c & 0xC0) != 0x80; });
+    if(chars > CHAT_MAX_CHARS){
+      send_error(client, "a message can be at most " + std::to_string(CHAT_MAX_CHARS) + " characters", "chat_long");
+      return;
+    }
+  }
+
+  std::deque<int64_t>& times = chat_times[p.name];
+  int64_t now = now_ms();
+  while(!times.empty() && now - times.front() >= CHAT_WINDOW_MS){
+    times.pop_front();
+  }
+  if((int)times.size() >= CHAT_BURST){
+    send_error(client, "slow down: at most " + std::to_string(CHAT_BURST) + " messages in " +
+                       std::to_string(CHAT_WINDOW_MS / 1000) + " seconds", "chat_fast");
+    return;
+  }
+  times.push_back(now);
+
+  json line = {{"type", "chat"}, {"name", p.name}, {"text", text}};
+  if(!phrase.empty()){
+    line["phrase"] = phrase;
+  }
+  chat_log.push_back(line);
+  if((int)chat_log.size() > CHAT_KEEP){
+    chat_log.pop_front();
+  }
+  if(config.log_events){
+    printf("[%s] %s: %s\n", config.table_name.empty() ? "table" : config.table_name.c_str(),
+           p.name.c_str(), text.c_str());
+  }
+  for(const auto& q : seats){
+    if(q->connected){
+      send(q->socket, line);
+    }
+  }
+}
+
+// The host stops someone's messages reaching the table, or lets them again.
+void table::handle_mute(int client, const json& msg){
+  int s = seat_of(client);
+  if(seats[s]->bot){
+    send_error(client, "bots cannot mute players", "bots_cannot");
+    return;
+  }
+  if(!leads(s, client, "mute players")){
+    return;
+  }
+  int target = msg.contains("seat") && msg["seat"].is_number_integer() ? msg["seat"].get<int>() : -1;
+  if(target < 0 || target >= (int)seats.size() || seats[target]->leaving){
+    send_error(client, "nobody to mute in that seat", "bad_seat");
+    return;
+  }
+  if(target == s){
+    send_error(client, "you cannot mute yourself", "mute_self");
+    return;
+  }
+  if(seats[target]->bot){
+    send_error(client, "bots do not chat", "bad_seat");
+    return;
+  }
+  bool on = !msg.contains("muted") || !msg["muted"].is_boolean() || msg["muted"].get<bool>();
+  const std::string name = seats[target]->name;
+  if(on == (muted.count(name) > 0)){
+    return;   // already so
+  }
+  if(on){
+    muted.insert(name);
+  }
+  else{
+    muted.erase(name);
+  }
+  event(name + (on ? " was muted by " : " was unmuted by ") + seats[s]->name,
+        {{"kind", on ? "muted" : "unmuted"}, {"name", name}, {"by", seats[s]->name}});
+  broadcast_state();
 }
 
 // Out of chips: buy in again. It counts as chips put in, so the standings
@@ -1455,6 +1588,9 @@ json table::state_for(int viewer) const{
               {"total_bet", p.total_bet}, {"status", status}, {"bot", p.bot}};
     if(p.rebuys > 0){
       s["rebuys"] = p.rebuys;
+    }
+    if(muted.count(p.name)){
+      s["muted"] = true;
     }
     if(p.house){
       s["house"] = true;     // run by the server: the host may remove it between hands

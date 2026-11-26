@@ -19,6 +19,7 @@
   --material-line: rgba(0, 0, 0, 0.07);
   --plate: rgba(255, 255, 255, 0.86);  /* a seat's name plate on the felt */
   --segment: #ffffff;                  /* the chosen part of a segmented control */
+  --bubble: #e9e9eb;                   /* someone else's chat line */
   --shadow: 0 10px 30px rgba(0, 0, 0, 0.1), 0 1px 3px rgba(0, 0, 0, 0.06);
 
   --accent: #007aff;
@@ -59,6 +60,7 @@
     --material-line: rgba(255, 255, 255, 0.08);
     --plate: rgba(44, 44, 46, 0.86);
     --segment: #636366;
+    --bubble: #3a3a3c;
     --shadow: 0 14px 40px rgba(0, 0, 0, 0.55), 0 1px 3px rgba(0, 0, 0, 0.4);
 
     --accent: #0a84ff;
@@ -139,6 +141,7 @@ button:disabled { opacity: 0.38; cursor: default; }
 /* Filled: the one thing to do next */
 button.primary { background: var(--accent); color: #fff; }
 button.primary:hover:not(:disabled) { background: var(--accent); filter: brightness(1.1); }
+button.primary.danger, button.primary.danger:hover:not(:disabled) { background: var(--red); }
 
 /* Plain: words in the accent colour, like a toolbar's */
 button.quiet { background: transparent; color: var(--accent); font-weight: 400; padding: 6px 10px; border-radius: 8px; font-size: 15px; }
@@ -263,7 +266,7 @@ select {
 
 .game { flex: 1; display: grid; grid-template-columns: minmax(0, 1fr) 320px; min-height: 0; }
 .play { display: flex; flex-direction: column; min-width: 0; padding: 18px 24px 14px; gap: 14px; }
-.side { border-left: 0.5px solid var(--line); background: var(--panel); display: flex; flex-direction: column; min-height: 0; }
+.side { min-width: 0; border-left: 0.5px solid var(--line); background: var(--panel); display: flex; flex-direction: column; min-height: 0; }
 .side-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 16px 18px 8px; }
 .side-head h2 { font-size: 20px; font-weight: 700; letter-spacing: -0.02em; }
 
@@ -655,6 +658,128 @@ select {
 .log li.street { color: var(--text); }
 .log li.empty { color: var(--faint); }
 
+/* ---------------------------------------------------------------- chat */
+
+.side-tabs button { position: relative; padding: 5px 14px; font-size: 13px; }
+.unread {
+  display: inline-grid; place-items: center;
+  min-width: 17px; height: 17px; padding: 0 5px; margin-left: 6px;
+  border-radius: 9px; background: var(--red); color: #fff;
+  font-size: 10px; font-weight: 700; font-variant-numeric: tabular-nums; vertical-align: 1px;
+}
+
+.chat { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.chat-lines { list-style: none; margin: 0; padding: 6px 14px 8px; overflow-y: auto; flex: 1; display: flex; flex-direction: column; }
+.chat-lines .empty { color: var(--faint); font-size: 13px; text-align: center; margin: auto 0; padding: 20px 0; }
+.msg { display: flex; flex-direction: column; align-items: flex-start; margin-top: 8px; }
+.msg.run { margin-top: 2px; }
+.msg.mine { align-items: flex-end; }
+.msg .from { font-size: 11px; color: var(--muted); margin: 0 12px 2px; }
+.msg .text {
+  max-width: 85%;
+  padding: 7px 12px;
+  border-radius: 18px;
+  background: var(--bubble);
+  font-size: 14px;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+  animation: line-in 0.22s ease-out;
+}
+.msg.mine .text { background: var(--accent); color: #fff; }
+.msg:not(:last-child) .text { animation: none; }
+@keyframes line-in { from { opacity: 0; transform: translateY(6px) scale(0.96); } }
+
+.phrases { display: flex; gap: 6px; overflow-x: auto; padding: 6px 14px 2px; scrollbar-width: none; }
+.phrases::-webkit-scrollbar { display: none; }
+.phrase { flex: none; border-radius: 999px; padding: 5px 12px; font-size: 13px; font-weight: 500; }
+.chat-form { display: flex; align-items: center; gap: 8px; padding: 8px 14px 14px; }
+.chat-form input {
+  flex: 1;
+  min-width: 0;
+  border-radius: 999px;
+  padding: 8px 14px;
+  font-size: 15px;
+  background-color: transparent;
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.chat-form input:focus-visible { box-shadow: inset 0 0 0 1px var(--accent), 0 0 0 3px var(--focus); }
+.send {
+  flex: none; width: 32px; height: 32px; padding: 0; border-radius: 50%;
+  display: grid; place-items: center;
+  background: var(--accent); color: #fff; font-size: 17px; font-weight: 700; line-height: 1;
+}
+.send:hover:not(:disabled) { background: var(--accent); filter: brightness(1.1); }
+
+/* What someone just said, over their seat for a few seconds */
+.seat:has(.say) { z-index: 5; }
+.say {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 9px);
+  transform: translateX(-50%);
+  z-index: 4;
+  width: max-content;
+  max-width: 190px;
+  padding: 7px 12px;
+  border-radius: 18px;
+  background: var(--cell);
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.3;
+  text-align: left;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.3);
+  pointer-events: none;
+  transition: opacity 0.3s;
+}
+.say span { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.say::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: -5px;
+  width: 12px;
+  height: 12px;
+  margin-left: -6px;
+  background: inherit;
+  border-radius: 2px;
+  transform: rotate(45deg);
+}
+.seat.me .say { background: var(--accent); color: #fff; }
+.say.pop { animation: say-in 0.3s cubic-bezier(0.2, 0.9, 0.3, 1.3); transform-origin: 50% 100%; }
+.say.fade { opacity: 0; }
+@keyframes say-in { from { opacity: 0; transform: translateX(-50%) translateY(8px) scale(0.6); } }
+
+/* The host's "more" mark on a person's seat, and the menu it opens */
+.remove.more { font-size: 8px; letter-spacing: -0.5px; }
+.remove.more:hover:not(:disabled) { background: var(--accent); }
+.menu {
+  position: fixed;
+  z-index: 30;
+  min-width: 200px;
+  display: flex;
+  flex-direction: column;
+  padding: 5px;
+  border-radius: 13px;
+  background: var(--material);
+  -webkit-backdrop-filter: saturate(180%) blur(30px);
+  backdrop-filter: saturate(180%) blur(30px);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.28), inset 0 0 0 0.5px var(--material-line);
+  animation: menu-in 0.16s ease-out;
+}
+@keyframes menu-in { from { opacity: 0; transform: scale(0.96); } }
+.menu button {
+  background: transparent;
+  border-radius: 8px;
+  padding: 8px 12px;
+  text-align: left;
+  font-weight: 400;
+  font-size: 14px;
+}
+.menu button:hover:not(:disabled), .menu button:focus-visible { background: var(--accent); color: #fff; box-shadow: none; }
+.menu button.danger { color: var(--red); }
+.menu button.danger:hover:not(:disabled), .menu button.danger:focus-visible { background: var(--red); color: #fff; }
+.menu button:active:not(:disabled) { transform: none; }
+
 /* ---------------------------------------------------------------- sheets */
 
 .summary {
@@ -777,7 +902,7 @@ select {
 /* ---------------------------------------------------------------- small screens */
 
 @media (max-width: 860px) {
-  .game { grid-template-columns: 1fr; grid-template-rows: auto 220px; }
+  .game { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto 300px; }   /* the phrase row scrolls, never widens the page */
   .side { border-left: 0; border-top: 0.5px solid var(--line); }
   .play { padding: 10px 10px 8px; gap: 10px; }
   .table { aspect-ratio: 4 / 5; max-height: none; min-height: 440px; }
@@ -819,6 +944,7 @@ select {
   .segmented { flex: 1 1 100%; }
   .segmented button { flex: 1; }
   .bar { gap: 6px 8px; padding: 8px 12px; }
+  .say { max-width: 140px; font-size: 13px; }
   .tag { display: none; }
   .join { padding-top: 24px; }
   .card-panel h2 { font-size: 30px; }
